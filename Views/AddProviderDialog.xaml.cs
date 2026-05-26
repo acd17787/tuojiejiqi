@@ -61,6 +61,16 @@ namespace AIRenderer.Views
                 AuthTypeCombo.SelectedIndex = 0;
                 AuthTypeCombo.IsEnabled = false;
             }
+            else if (ApiFormatCombo.SelectedItem is ComboBoxItem generationsItem &&
+                     generationsItem.Tag?.ToString() == "images_generations")
+            {
+                if (string.IsNullOrWhiteSpace(UrlBox.Text))
+                    UrlBox.Text = "https://api.bltcy.ai";
+                if (string.IsNullOrWhiteSpace(ModelsBox.Text))
+                    ModelsBox.Text = "flux-kontext-pro, flux-kontext-max";
+                AuthTypeCombo.SelectedIndex = 0;
+                AuthTypeCombo.IsEnabled = true;
+            }
             else
             {
                 AuthTypeCombo.IsEnabled = true;

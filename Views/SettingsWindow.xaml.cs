@@ -36,6 +36,10 @@ namespace AIRenderer.Views
             _selectedProvider = _allProviders.Find(p => p.Id == selectedProvider.Id) ?? _allProviders[0];
             _selectedModel = selectedModel;
 
+            var (vp, vl) = SettingsService.LoadVertexSettings();
+            _vertexProject = string.IsNullOrWhiteSpace(vp) ? "your-project-id" : vp;
+            _vertexLocation = string.IsNullOrWhiteSpace(vl) ? "us-central1" : vl;
+
             OnPropertyChanged(nameof(AvailableProviders));
             OnPropertyChanged(nameof(SelectedProviderConfig));
 
@@ -77,6 +81,20 @@ namespace AIRenderer.Views
         {
             get => _selectedModel;
             set { _selectedModel = value; OnPropertyChanged(); }
+        }
+
+        private string _vertexProject;
+        public string VertexProject
+        {
+            get => _vertexProject;
+            set { _vertexProject = value; OnPropertyChanged(); }
+        }
+
+        private string _vertexLocation;
+        public string VertexLocation
+        {
+            get => _vertexLocation;
+            set { _vertexLocation = value; OnPropertyChanged(); }
         }
 
         public string ApiKey => ApiKeyBox.Password;
@@ -141,7 +159,7 @@ namespace AIRenderer.Views
         private async void TestApiKey_Click(object sender, RoutedEventArgs e)
         {
             string apiKey = ApiKeyBox.Password;
-            if (string.IsNullOrWhiteSpace(apiKey))
+            if (_selectedProvider?.Id != "VertexADC" && string.IsNullOrWhiteSpace(apiKey))
             {
                 TestResultText.Text = "Please enter API Key";
                 TestResultText.Foreground = Brushes.Orange;
@@ -181,6 +199,42 @@ namespace AIRenderer.Views
 
                 System.Net.Http.HttpResponseMessage response;
 
+                if (provider.ApiFormat == "images_generations")
+                {
+                    string model = selectedTestModel
+                        ?? provider.DefaultModel
+                        ?? (provider.Models.Count > 0 ? provider.Models[0] : "flux-kontext-pro");
+                    string url = $"{provider.BaseUrl.TrimEnd('/')}/v1/images/generations";
+                    var payload = new { model = model, prompt = "cat", size = "1024x1024" };
+                    var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                    response = await _httpClient.PostAsync(url, content);
+                    return response.IsSuccessStatusCode;
+                }
+
+                if (provider.ApiFormat == "responses")
+                {
+                    string model = selectedTestModel
+                        ?? provider.DefaultModel
+                        ?? (provider.Models.Count > 0 ? provider.Models[0] : "gpt-4.1");
+                    string url = $"{provider.BaseUrl.TrimEnd('/')}/v1/responses";
+                    var payload = new { model = model, input = new[] { new { role = "user", content = "Hi" } } };
+                    var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                    response = await _httpClient.PostAsync(url, content);
+                    return response.IsSuccessStatusCode;
+                }
+
+                if (provider.ApiFormat == "chat")
+                {
+                    string model = selectedTestModel
+                        ?? provider.DefaultModel
+                        ?? (provider.Models.Count > 0 ? provider.Models[0] : "gpt-4.1");
+                    string url = $"{provider.BaseUrl.TrimEnd('/')}/v1/chat/completions";
+                    var payload = new { model = model, messages = new[] { new { role = "user", content = "Hi" } } };
+                    var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                    response = await _httpClient.PostAsync(url, content);
+                    return response.IsSuccessStatusCode;
+                }
+
                 if (provider.ApiFormat == "openai")
                 {
                     // GET /v1/models — 轻量验证，无需发图
@@ -189,21 +243,41 @@ namespace AIRenderer.Views
                 }
                 else
                 {
-                    // Gemini 格式：POST generateContent
+                    // Gemini / Vertex 格式：POST generateContent
                     _httpClient.DefaultRequestHeaders.Clear();
                     string model = selectedTestModel
                         ?? provider.DefaultModel
                         ?? (provider.Models.Count > 0 ? provider.Models[0] : "gemini-3.1-flash-image-preview");
-                    string url = $"{provider.BaseUrl.TrimEnd('/')}/v1beta/models/{model}:generateContent";
+                    string url;
 
-                    if (provider.AuthType == "goog")
-                        _httpClient.DefaultRequestHeaders.Add("x-goog-api-key", apiKey);
+                    if (provider.Id == "VertexKey" || provider.Id == "VertexADC")
+                    {
+                        string proj = string.IsNullOrWhiteSpace(VertexProject) ? "your-project-id" : VertexProject;
+                        string loc = string.IsNullOrWhiteSpace(VertexLocation) ? "us-central1" : VertexLocation;
+                        url = $"https://{loc}-aiplatform.googleapis.com/v1/projects/{proj}/locations/{loc}/publishers/google/models/{model}:generateContent";
+                        
+                        if (provider.Id == "VertexKey")
+                        {
+                            _httpClient.DefaultRequestHeaders.Add("x-goog-api-key", apiKey);
+                        }
+                        else if (provider.Id == "VertexADC")
+                        {
+                            string token = await GetGoogleCloudAccessTokenAsync();
+                            _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {token}");
+                        }
+                    }
                     else
-                        _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+                    {
+                        url = $"{provider.BaseUrl.TrimEnd('/')}/v1beta/models/{model}:generateContent";
+                        if (provider.AuthType == "goog")
+                            _httpClient.DefaultRequestHeaders.Add("x-goog-api-key", apiKey);
+                        else
+                            _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+                    }
 
                     var payload = new
                     {
-                        contents = new[] { new { parts = new[] { new { text = "Hi" } } } },
+                        contents = new[] { new { role = "user", parts = new[] { new { text = "Hi" } } } },
                         generationConfig = new { responseModalities = new[] { "TEXT" } }
                     };
                     var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
@@ -230,6 +304,34 @@ namespace AIRenderer.Views
                 RhinoApp.WriteLine($"API Test Exception: {ex.Message}");
                 return false;
             }
+        }
+
+        private async Task<string> GetGoogleCloudAccessTokenAsync()
+        {
+            var process = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = "/c gcloud auth application-default print-access-token",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+            process.Start();
+            Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+            Task<string> errorTask = process.StandardError.ReadToEndAsync();
+            await Task.Run(() => process.WaitForExit());
+            string output = (await outputTask).Trim();
+            if (process.ExitCode != 0)
+            {
+                throw new System.Exception("gcloud error: " + await errorTask);
+            }
+            if (string.IsNullOrWhiteSpace(output))
+                throw new System.Exception("gcloud returned an empty access token. Run: gcloud auth application-default login");
+            return output;
         }
 
         private void EditProviderButton_Click(object sender, RoutedEventArgs e)
@@ -307,6 +409,8 @@ namespace AIRenderer.Views
                 ApiKeyBox.Password,
                 _selectedModel ?? _selectedProvider?.DefaultModel,
                 _selectedProvider);
+            
+            SettingsService.SaveVertexSettings(VertexProject, VertexLocation);
 
             DialogResult = true;
             Close();

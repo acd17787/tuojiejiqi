@@ -274,7 +274,9 @@ namespace AIRenderer.ViewModels
                 {
                     var sourceBitmap = ScreenCapture.BitmapSourceToBitmap(item.SourceImage);
 
-                    if (previousResults.Count == 0 || provider.ApiFormat == "openai")
+                    if (previousResults.Count == 0 ||
+                        provider.ApiFormat == "openai" ||
+                        provider.ApiFormat == "images_generations")
                     {
                         result = await _renderService.GenerateImageAsync(
                             provider, apiKey, itemPrompt, sourceBitmap, _settings, refBitmap);

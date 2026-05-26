@@ -93,6 +93,14 @@
                     <TextBlock Text="Image Size" Style="{StaticResource Label}"/>
                     <ComboBox ItemsSource="{Binding Settings.ImageSizes}"
                               SelectedItem="{Binding Settings.SelectedImageSize}"
+                              IsEnabled="{Binding Settings.IsImageSizeEnabled}"
+                              Padding="8,5" FontSize="12"/>
+
+                    <TextBlock Text="Source Speed" Style="{StaticResource Label}"/>
+                    <ComboBox ItemsSource="{Binding Settings.SourceImageModes}"
+                              SelectedItem="{Binding Settings.SelectedSourceImageModeItem}"
+                              DisplayMemberPath="DisplayName"
+                              IsEnabled="{Binding Settings.IsSourceImageModeEnabled}"
                               Padding="8,5" FontSize="12"/>
 
                     <Separator Margin="0,14,0,0"/>

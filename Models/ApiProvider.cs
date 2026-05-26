@@ -2,34 +2,29 @@ using System.Collections.Generic;
 
 namespace AIRenderer.Models
 {
-    /// <summary>
-    /// API 服务商枚举（内置服务商）
-    /// </summary>
     public enum ApiProvider
     {
-        Gemini,
-        BltAI
+        Gemini = 0,
+        BltAI = 1,
+        BltGenerations = 2,
+        BltFlux = 2,
+        BltResponses = 3,
+        BltChat = 4,
+        VertexKey = 5,
+        VertexADC = 6
     }
 
-    /// <summary>
-    /// 用户自定义服务商配置
-    /// </summary>
     public class CustomProviderConfig
     {
         public string Id { get; set; }
         public string DisplayName { get; set; } = "";
         public string BaseUrl { get; set; } = "";
-        /// <summary>"bearer" = Authorization: Bearer，"goog" = x-goog-api-key</summary>
         public string AuthType { get; set; } = "bearer";
-        /// <summary>"gemini" = Gemini generateContent 格式，"openai" = OpenAI Images API 格式</summary>
         public string ApiFormat { get; set; } = "gemini";
         public List<string> Models { get; set; } = new List<string>();
         public string DefaultModel { get; set; } = "";
     }
 
-    /// <summary>
-    /// 统一的服务商条目，内置和自定义服务商均使用此类型
-    /// </summary>
     public class ProviderItem
     {
         public string Id { get; set; }
@@ -39,10 +34,36 @@ namespace AIRenderer.Models
         public string DefaultModel { get; set; }
         public bool IsCustom { get; set; }
         public string AuthType { get; set; } = "bearer";
-        /// <summary>"gemini" = Gemini generateContent 格式，"openai" = OpenAI Images API 格式</summary>
         public string ApiFormat { get; set; } = "gemini";
         public string ApiKeyUrl { get; set; }
         public ApiProvider? BuiltInProvider { get; set; }
+
+        public static string NormalizeBaseUrl(string baseUrl)
+        {
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                return "";
+
+            var url = baseUrl.Trim();
+            if (System.Uri.TryCreate(url, System.UriKind.Absolute, out var uri) &&
+                uri.Host.Equals("api.apiyi.com", System.StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{uri.Scheme}://{uri.Host}";
+            }
+
+            while (url.EndsWith("/"))
+                url = url.Substring(0, url.Length - 1);
+
+            // Users often paste "https://host/v1". Our code appends "/v1/..." itself.
+            if (url.EndsWith("/v1", System.StringComparison.OrdinalIgnoreCase))
+                url = url.Substring(0, url.Length - 3);
+            if (url.EndsWith("/v1beta", System.StringComparison.OrdinalIgnoreCase))
+                url = url.Substring(0, url.Length - 6);
+
+            while (url.EndsWith("/"))
+                url = url.Substring(0, url.Length - 1);
+
+            return url;
+        }
 
         public static ProviderItem FromBuiltIn(ApiProviderConfig config)
         {
@@ -50,11 +71,12 @@ namespace AIRenderer.Models
             {
                 Id = config.Provider.ToString(),
                 DisplayName = config.DisplayName,
-                BaseUrl = config.BaseUrl,
+                BaseUrl = NormalizeBaseUrl(config.BaseUrl),
                 Models = config.Models ?? new List<string>(),
                 DefaultModel = config.DefaultModel,
                 IsCustom = false,
-                AuthType = config.Provider == ApiProvider.Gemini ? "goog" : "bearer",
+                AuthType = "bearer",
+                ApiFormat = config.ApiFormat,
                 ApiKeyUrl = config.ApiKeyUrl,
                 BuiltInProvider = config.Provider
             };
@@ -67,7 +89,7 @@ namespace AIRenderer.Models
             {
                 Id = config.Id,
                 DisplayName = config.DisplayName,
-                BaseUrl = config.BaseUrl,
+                BaseUrl = NormalizeBaseUrl(config.BaseUrl),
                 Models = models,
                 DefaultModel = !string.IsNullOrEmpty(config.DefaultModel)
                     ? config.DefaultModel
@@ -81,9 +103,6 @@ namespace AIRenderer.Models
         }
     }
 
-    /// <summary>
-    /// API 服务商配置
-    /// </summary>
     public class ApiProviderConfig
     {
         public ApiProvider Provider { get; set; }
@@ -93,18 +112,20 @@ namespace AIRenderer.Models
         public string DefaultModel { get; set; }
         public Dictionary<string, string> ModelDisplayNames { get; set; }
         public string ApiKeyUrl { get; set; }
+        public string ApiFormat { get; set; } = "gemini";
 
         public static ApiProviderConfig GetConfig(ApiProvider provider)
         {
             switch (provider)
             {
-                case ApiProvider.Gemini:
+                case ApiProvider.BltAI:
                     return new ApiProviderConfig
                     {
-                        Provider = ApiProvider.Gemini,
-                        DisplayName = "Google原生",
-                        BaseUrl = "https://generativelanguage.googleapis.com",
+                        Provider = ApiProvider.BltAI,
+                        DisplayName = "Bltcy Nano Banana",
+                        BaseUrl = "https://api.bltcy.ai",
                         DefaultModel = "gemini-3.1-flash-image-preview",
+                        ApiFormat = "gemini",
                         Models = new List<string>
                         {
                             "gemini-3.1-flash-image-preview",
@@ -113,30 +134,65 @@ namespace AIRenderer.Models
                         },
                         ModelDisplayNames = new Dictionary<string, string>
                         {
-                            { "gemini-3.1-flash-image-preview", "Nano Banana 2" },
+                            { "gemini-3.1-flash-image-preview", "Nano Banana 3.1 Flash" },
                             { "gemini-3-pro-image-preview", "Nano Banana Pro" },
                             { "gemini-2.5-flash-image", "Nano Banana" }
                         },
-                        ApiKeyUrl = "https://aistudio.google.com/app/apikey"
+                        ApiKeyUrl = "https://api.bltcy.ai/"
                     };
-                case ApiProvider.BltAI:
+                case ApiProvider.BltGenerations:
                     return new ApiProviderConfig
                     {
-                        Provider = ApiProvider.BltAI,
-                        DisplayName = "柏拉图AI",
-                        BaseUrl = "https://hk-api.gptbest.vip",
-                        DefaultModel = "gemini-3.1-flash-image-preview",
+                        Provider = ApiProvider.BltGenerations,
+                        DisplayName = "GPT",
+                        BaseUrl = "https://api.bltcy.ai",
+                        DefaultModel = "flux-kontext-pro",
+                        ApiFormat = "images_generations",
                         Models = new List<string>
                         {
-                            "gemini-3.1-flash-image-preview",
-                            "gemini-3-pro-image-preview"
+                            "gpt-image-2-all",
+                            "gpt-image-2-vip",
+                            "gpt-image-2",
+                            "flux-kontext-pro",
+                            "flux-kontext-max",
+                            "qwen-image-edit",
+                            "qwen-image-edit-2509"
                         },
                         ModelDisplayNames = new Dictionary<string, string>
                         {
-                            { "gemini-3.1-flash-image-preview", "Nano Banana 2" },
-                            { "gemini-3-pro-image-preview", "Nano Banana Pro" }
+                            { "gpt-image-2-all", "GPT Image 2 All" },
+                            { "gpt-image-2-vip", "GPT Image 2 VIP" },
+                            { "gpt-image-2", "GPT Image 2" },
+                            { "flux-kontext-pro", "Flux Kontext Pro" },
+                            { "flux-kontext-max", "Flux Kontext Max" },
+                            { "qwen-image-edit", "Qwen Image Edit" },
+                            { "qwen-image-edit-2509", "Qwen Image Edit 2509" }
                         },
-                        ApiKeyUrl = "https://api.bltcy.ai/register?aff=2Z1d103040/"
+                        ApiKeyUrl = "https://api.bltcy.ai/"
+                    };
+                case ApiProvider.BltResponses:
+                    return new ApiProviderConfig
+                    {
+                        Provider = ApiProvider.BltResponses,
+                        DisplayName = "Bltcy Responses",
+                        BaseUrl = "https://api.bltcy.ai",
+                        DefaultModel = "gpt-4.1",
+                        ApiFormat = "responses",
+                        Models = new List<string> { "gpt-4.1", "gpt-4.1-mini", "o3-pro", "codex-mini-latest" },
+                        ModelDisplayNames = new Dictionary<string, string>(),
+                        ApiKeyUrl = "https://api.bltcy.ai/"
+                    };
+                case ApiProvider.BltChat:
+                    return new ApiProviderConfig
+                    {
+                        Provider = ApiProvider.BltChat,
+                        DisplayName = "Bltcy Chat",
+                        BaseUrl = "https://api.bltcy.ai",
+                        DefaultModel = "gpt-4.1",
+                        ApiFormat = "chat",
+                        Models = new List<string> { "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini" },
+                        ModelDisplayNames = new Dictionary<string, string>(),
+                        ApiKeyUrl = "https://api.bltcy.ai/"
                     };
                 default:
                     return null;
@@ -147,8 +203,8 @@ namespace AIRenderer.Models
         {
             return new List<ApiProviderConfig>
             {
-                GetConfig(ApiProvider.Gemini),
-                GetConfig(ApiProvider.BltAI)
+                GetConfig(ApiProvider.BltAI),
+                GetConfig(ApiProvider.BltGenerations)
             };
         }
 
@@ -156,8 +212,8 @@ namespace AIRenderer.Models
         {
             return new List<ProviderItem>
             {
-                ProviderItem.FromBuiltIn(GetConfig(ApiProvider.Gemini)),
-                ProviderItem.FromBuiltIn(GetConfig(ApiProvider.BltAI))
+                ProviderItem.FromBuiltIn(GetConfig(ApiProvider.BltAI)),
+                ProviderItem.FromBuiltIn(GetConfig(ApiProvider.BltGenerations))
             };
         }
     }

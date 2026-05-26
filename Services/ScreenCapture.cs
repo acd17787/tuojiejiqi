@@ -215,6 +215,20 @@ namespace AIRenderer.Services
 
             try
             {
+                using (var safeBitmap = bitmap.Clone(
+                    new Rectangle(0, 0, bitmap.Width, bitmap.Height),
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+                {
+                    return BitmapToBitmapSourceFromClone(safeBitmap);
+                }
+            }
+            catch (Exception ex)
+            {
+                RhinoApp.WriteLine($"BitmapToBitmapSource clone path error: {ex.Message}");
+            }
+
+            try
+            {
                 // Method 1: Using memory stream
                 using (MemoryStream ms = new MemoryStream())
                 {
@@ -267,6 +281,25 @@ namespace AIRenderer.Services
                     RhinoApp.WriteLine($"Fallback conversion error: {ex2.Message}");
                     return null;
                 }
+            }
+        }
+
+        private static BitmapSource BitmapToBitmapSourceFromClone(Bitmap bitmap)
+        {
+            using (MemoryStream ms = new MemoryStream())
+            {
+                bitmap.Save(ms, ImageFormat.Png);
+                ms.Position = 0;
+
+                var bitmapImage = new BitmapImage();
+                bitmapImage.BeginInit();
+                bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
+                bitmapImage.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
+                bitmapImage.StreamSource = ms;
+                bitmapImage.EndInit();
+                bitmapImage.Freeze();
+
+                return bitmapImage;
             }
         }
     }

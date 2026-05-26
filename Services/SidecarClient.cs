@@ -1,0 +1,333 @@
+using Newtonsoft.Json;
+using Rhino;
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.IO.Pipes;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Reflection;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace AIRenderer.Services
+{
+    /// <summary>
+    /// Routes all HttpClient requests through a separate Sidecar.exe process via named pipe.
+    /// This allows API calls to work even when Rhino.exe is blocked by firewall.
+    /// Falls back to net48 Sidecar if net7.0 Sidecar fails to start (missing global runtime).
+    /// </summary>
+    public class SidecarHttpMessageHandler : HttpMessageHandler
+    {
+        private static Process s_process;
+        private static string s_activeSidecarPath;
+        private static readonly object s_lock = new object();
+        private static int s_refCount;
+        private static bool s_net48FallbackActive;
+
+        private readonly string _pipeName;
+        private bool _disposed;
+
+        public SidecarHttpMessageHandler()
+        {
+            _pipeName = $"TuoJieSidecar-{Process.GetCurrentProcess().Id}";
+            EnsureSidecarRunning();
+        }
+
+        private void EnsureSidecarRunning()
+        {
+            lock (s_lock)
+            {
+                if (s_process != null && !s_process.HasExited)
+                {
+                    s_refCount++;
+                    return;
+                }
+
+                var pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                LogSidecar($"Plugin directory: {pluginDir}");
+
+                // Try net7.0 Sidecar first, then net48 fallback
+                string[] candidates = s_net48FallbackActive
+                    ? new[] { Path.Combine(pluginDir ?? ".", "net48-sidecar", "TuoJieSidecar.exe") }
+                    : new[] {
+                        Path.Combine(pluginDir ?? ".", "TuoJieSidecar.exe"),
+                        Path.Combine(pluginDir ?? ".", "net48-sidecar", "TuoJieSidecar.exe"),
+                        Path.Combine(pluginDir ?? ".", "TuoJieSidecar-net48.exe")
+                      };
+
+                Exception lastError = null;
+                foreach (var sidecarExe in candidates)
+                {
+                    LogSidecar($"Checking Sidecar candidate: {sidecarExe}");
+                    if (!File.Exists(sidecarExe))
+                    {
+                        LogSidecar($"Missing Sidecar candidate: {sidecarExe}");
+                        continue;
+                    }
+
+                    try
+                    {
+                        var proc = new Process
+                        {
+                            StartInfo = new ProcessStartInfo
+                            {
+                                FileName = sidecarExe,
+                                Arguments = $"\"{_pipeName}\" {Process.GetCurrentProcess().Id}",
+                                UseShellExecute = false,
+                                CreateNoWindow = true,
+                                WindowStyle = ProcessWindowStyle.Hidden,
+                                RedirectStandardOutput = true,
+                                RedirectStandardError = true
+                            },
+                            EnableRaisingEvents = true
+                        };
+
+                        proc.Start();
+                        LogSidecar($"Started {Path.GetFileName(sidecarExe)} pid={proc.Id}");
+
+                        // Wait and verify it stays alive (not an immediate crash)
+                        Thread.Sleep(500);
+
+                        if (proc.HasExited)
+                        {
+                            var stderr = proc.StandardError.ReadToEnd();
+                            var exitCode = proc.ExitCode;
+                            var exeName = Path.GetFileName(sidecarExe);
+                            RhinoApp.WriteLine($"[TuoJie] {exeName} exited immediately (code {exitCode}): {stderr}");
+                            LogSidecar($"{exeName} exited immediately (code {exitCode}): {stderr}");
+                            lastError = new Exception($"Sidecar exited with code {exitCode}: {stderr}");
+                            proc.Dispose();
+                            continue;
+                        }
+
+                        s_process = proc;
+                        s_activeSidecarPath = sidecarExe;
+                        s_net48FallbackActive = sidecarExe.Contains("net48");
+                        s_refCount = 1;
+
+                        if (s_net48FallbackActive)
+                            RhinoApp.WriteLine("[TuoJie] Using net48 Sidecar (fallback mode)");
+                        LogSidecar($"Sidecar active: {s_activeSidecarPath}, pid={s_process.Id}, fallback={s_net48FallbackActive}");
+
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        LogSidecar($"Failed to start {sidecarExe}: {ex}");
+                        lastError = ex;
+                    }
+                }
+
+                throw new InvalidOperationException(
+                    $"Failed to start Sidecar process. Last error: {lastError?.Message ?? "Sidecar not found"}");
+            }
+        }
+
+        private static void LogSidecar(string message)
+        {
+            try
+            {
+                var logDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "AIRenderer", "logs");
+                Directory.CreateDirectory(logDir);
+                File.AppendAllText(
+                    Path.Combine(logDir, $"sidecar_client_{DateTime.Now:yyyyMMdd}.log"),
+                    $"[{DateTime.Now:HH:mm:ss.fff}] {message}{Environment.NewLine}");
+            }
+            catch { }
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            // Build sidecar request
+            var sidecarReq = new SidecarRequest
+            {
+                Id = Guid.NewGuid().ToString(),
+                Method = request.Method.ToString(),
+                Url = request.RequestUri.ToString()
+            };
+
+            // Collect request headers
+            var headers = new Dictionary<string, string[]>();
+            foreach (var h in request.Headers)
+                headers[h.Key] = h.Value.ToArray();
+            if (request.Content?.Headers != null)
+            {
+                foreach (var h in request.Content.Headers)
+                    headers[h.Key] = h.Value.ToArray();
+            }
+            sidecarReq.Headers = headers;
+
+            // Read body
+            if (request.Content != null)
+                sidecarReq.Body = await request.Content.ReadAsByteArrayAsync();
+
+            // Send through pipe
+            var sidecarRes = await SendToSidecarAsync(sidecarReq, cancellationToken);
+
+            if (sidecarRes == null || (!sidecarRes.Success && sidecarRes.StatusCode == 0))
+            {
+                var err = sidecarRes?.Error ?? "Sidecar communication failed";
+                throw new HttpRequestException(err);
+            }
+
+            // Build response
+            var response = new HttpResponseMessage((HttpStatusCode)sidecarRes.StatusCode);
+            if (sidecarRes.Body != null && sidecarRes.Body.Length > 0)
+            {
+                response.Content = new ByteArrayContent(sidecarRes.Body);
+                if (sidecarRes.Headers != null &&
+                    sidecarRes.Headers.TryGetValue("Content-Type", out var ct) &&
+                    ct.Length > 0)
+                {
+                    response.Content.Headers.ContentType =
+                        MediaTypeHeaderValue.Parse(string.Join(",", ct));
+                }
+            }
+
+            // Copy response headers (skip content-type, transfer-encoding — those go on content)
+            var skipHeaders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "Content-Type", "Transfer-Encoding", "Content-Length" };
+            if (sidecarRes.Headers != null)
+            {
+                foreach (var h in sidecarRes.Headers)
+                {
+                    if (skipHeaders.Contains(h.Key)) continue;
+                    response.Headers.TryAddWithoutValidation(h.Key, h.Value);
+                }
+            }
+
+            return response;
+        }
+
+        private async Task<SidecarResponse> SendToSidecarAsync(
+            SidecarRequest request, CancellationToken ct)
+        {
+            var json = JsonConvert.SerializeObject(request);
+            var bytes = Encoding.UTF8.GetBytes(json);
+            var lengthPrefix = BitConverter.GetBytes(bytes.Length);
+
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                try
+                {
+                    using var pipe = new NamedPipeClientStream(
+                        ".", _pipeName, PipeDirection.InOut,
+                        PipeOptions.Asynchronous);
+
+                    using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    connectCts.CancelAfter(TimeSpan.FromSeconds(10));
+
+                    await pipe.ConnectAsync(connectCts.Token);
+
+                    // Write request
+                    await pipe.WriteAsync(lengthPrefix, 0, 4, ct);
+                    await pipe.WriteAsync(bytes, 0, bytes.Length, ct);
+                    await pipe.FlushAsync(ct);
+
+                    // Read response length
+                    var lenBuf = new byte[4];
+                    await ReadExactAsync(pipe, lenBuf, 4, ct);
+                    var respLen = BitConverter.ToInt32(lenBuf, 0);
+
+                    if (respLen <= 0 || respLen > 50 * 1024 * 1024)
+                        throw new IOException($"Invalid response length: {respLen}");
+
+                    // Read response body
+                    var respBuf = new byte[respLen];
+                    await ReadExactAsync(pipe, respBuf, respLen, ct);
+                    var respJson = Encoding.UTF8.GetString(respBuf, 0, respLen);
+
+                    return JsonConvert.DeserializeObject<SidecarResponse>(respJson);
+                }
+                catch (OperationCanceledException)
+                {
+                    return new SidecarResponse { Id = request.Id, StatusCode = 0, Error = "Request cancelled" };
+                }
+                catch (Exception) when (attempt == 0)
+                {
+                    // Restart sidecar and retry once
+                    RestartSidecar();
+                }
+            }
+
+            return new SidecarResponse { Id = request.Id, StatusCode = 0, Error = "Sidecar unreachable after retry" };
+        }
+
+        private void RestartSidecar()
+        {
+            lock (s_lock)
+            {
+                try
+                {
+                    if (s_process != null && !s_process.HasExited)
+                        s_process.Kill();
+                }
+                catch { }
+
+                s_process = null;
+                EnsureSidecarRunning();
+            }
+        }
+
+        private static async Task ReadExactAsync(PipeStream pipe, byte[] buffer, int count, CancellationToken ct)
+        {
+            int offset = 0;
+            while (offset < count)
+            {
+                int read = await pipe.ReadAsync(buffer, offset, count - offset, ct);
+                if (read == 0)
+                    throw new EndOfStreamException("Pipe closed unexpectedly");
+                offset += read;
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                _disposed = true;
+                lock (s_lock)
+                {
+                    s_refCount--;
+                    if (s_refCount <= 0 && s_process != null && !s_process.HasExited)
+                    {
+                        try { s_process.Kill(); } catch { }
+                        s_process = null;
+                    }
+                }
+            }
+            base.Dispose(disposing);
+        }
+
+        // ── Protocol types ──────────────────────────────────────────────
+
+        class SidecarRequest
+        {
+            public string Id { get; set; }
+            public string Method { get; set; }
+            public string Url { get; set; }
+            public Dictionary<string, string[]> Headers { get; set; }
+            public byte[] Body { get; set; }
+        }
+
+        class SidecarResponse
+        {
+            public string Id { get; set; }
+            public int StatusCode { get; set; }
+            public Dictionary<string, string[]> Headers { get; set; }
+            public byte[] Body { get; set; }
+            public string Error { get; set; }
+
+            [JsonIgnore]
+            public bool Success => Error == null;
+        }
+    }
+}

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 	
   <PropertyGroup>
     <!-- Select the framework(s) you wish to target.
@@ -8,19 +8,20 @@
         Rhino 8 Mac: net7.0, net7.0-macos, net7.0-macos12.0, etc
     -->
     <TargetFrameworks>net7.0-windows;net48</TargetFrameworks>
-    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <EnableDynamicLoading Condition="'$(TargetFramework)'=='net7.0-windows'">true</EnableDynamicLoading>
     <TargetExt>.rhp</TargetExt>
     <NoWarn>NU1701</NoWarn>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <LangVersion>latest</LangVersion>
   </PropertyGroup>
   
   <PropertyGroup>
     <!-- Specifies information for Assembly and Yak -->
     <Version>1.0.0</Version>
-    <AssemblyName>Chameleon</AssemblyName>
-    <Title>Chameleon</Title>
+    <AssemblyName>TuoJie</AssemblyName>
+    <Title>TuoJie</Title>
     <Company>Robin Song Design</Company>
-    <Description>Chameleon AI Renderer — AI-powered architectural rendering for Rhino</Description>
+    <Description>TuoJie AI Renderer — AI-powered architectural rendering for Rhino</Description>
   </PropertyGroup>
   
   <ItemGroup>
@@ -30,9 +31,52 @@
     <PackageReference Include="System.Net.Http" Version="4.3.4" />
   </ItemGroup>
   
+  <!-- Exclude Sidecar subdirectory from main project compilation -->
+  <ItemGroup>
+    <Compile Remove="Sidecar\**" />
+    <EmbeddedResource Remove="Sidecar\**" />
+    <None Remove="Sidecar\**" />
+  </ItemGroup>
+
   <!-- For Windows only builds -->
   <PropertyGroup Condition="$(TargetFramework.Contains('-windows')) or $(TargetFramework.StartsWith('net4'))">
     <UseWpf>true</UseWpf>
   </PropertyGroup>
+
+  <!-- Copy Sidecar.exe (and its deps) to output dir. Build Sidecar first, then this project.
+       For net7.0-windows: also copies net48 Sidecar as fallback (TuoJieSidecar-net48.exe)
+       in case target machine lacks global .NET 7 runtime. -->
+  <Target Name="CopySidecar" AfterTargets="Build">
+    <PropertyGroup>
+      <SidecarDir>$(MSBuildProjectDirectory)\Sidecar\bin\$(Configuration)\$(TargetFramework)</SidecarDir>
+      <Sidecar48Dir>$(MSBuildProjectDirectory)\Sidecar\bin\$(Configuration)\net48</Sidecar48Dir>
+    </PropertyGroup>
+    <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.exe" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.exe')" />
+    <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.dll" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.dll')" />
+    <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.pdb" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.pdb')" />
+    <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.deps.json" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.deps.json')" />
+    <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.runtimeconfig.json" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.runtimeconfig.json')" />
+    <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.exe.config" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.exe.config')" />
+    <!-- net48 fallback for net7.0-windows builds -->
+    <Copy SourceFiles="$(Sidecar48Dir)\TuoJieSidecar.exe"
+          DestinationFiles="$(OutputPath)\TuoJieSidecar-net48.exe"
+          Condition="'$(TargetFramework)' == 'net7.0-windows' and Exists('$(Sidecar48Dir)\TuoJieSidecar.exe')" />
+    <Copy SourceFiles="$(Sidecar48Dir)\TuoJieSidecar.exe.config"
+          DestinationFiles="$(OutputPath)\TuoJieSidecar-net48.exe.config"
+          Condition="'$(TargetFramework)' == 'net7.0-windows' and Exists('$(Sidecar48Dir)\TuoJieSidecar.exe.config')" />
+    <Copy SourceFiles="$(Sidecar48Dir)\TuoJieSidecar.exe"
+          DestinationFolder="$(OutputPath)\net48-sidecar"
+          Condition="'$(TargetFramework)' == 'net7.0-windows' and Exists('$(Sidecar48Dir)\TuoJieSidecar.exe')" />
+    <Copy SourceFiles="$(Sidecar48Dir)\TuoJieSidecar.exe.config"
+          DestinationFolder="$(OutputPath)\net48-sidecar"
+          Condition="'$(TargetFramework)' == 'net7.0-windows' and Exists('$(Sidecar48Dir)\TuoJieSidecar.exe.config')" />
+    <Copy SourceFiles="$(Sidecar48Dir)\Newtonsoft.Json.dll"
+          DestinationFolder="$(OutputPath)\net48-sidecar"
+          Condition="'$(TargetFramework)' == 'net7.0-windows' and Exists('$(Sidecar48Dir)\Newtonsoft.Json.dll')" />
+    <!-- Diagnostic tool -->
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\tools\diagnose.bat"
+          DestinationFolder="$(OutputPath)"
+          Condition="Exists('$(MSBuildProjectDirectory)\tools\diagnose.bat')" />
+  </Target>
 
 </Project>

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
@@ -20,6 +21,10 @@ namespace AIRenderer.Models
         // Source image dimensions (from capture)
         private int _sourceWidth = 0;
         private int _sourceHeight = 0;
+
+        // Vertex AI specific settings
+        private string _vertexProject = "";
+        private string _vertexLocation = "us-central1";
 
         // Available providers
         public List<ApiProviderConfig> AvailableProviders { get; } = ApiProviderConfig.GetAllProviders();
@@ -44,6 +49,7 @@ namespace AIRenderer.Models
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(SelectedProvider));
                 OnPropertyChanged(nameof(SelectedProviderDisplayName));
+                OnPropertyChanged(nameof(IsImageSizeEnabled));
             }
         }
 
@@ -69,6 +75,8 @@ namespace AIRenderer.Models
             OnPropertyChanged(nameof(ApiUrl));
             OnPropertyChanged(nameof(ModelList));
             OnPropertyChanged(nameof(SelectedModelItem));
+            OnPropertyChanged(nameof(IsImageSizeEnabled));
+            OnPropertyChanged(nameof(IsSourceImageModeEnabled));
         }
 
         public RenderSettings()
@@ -132,10 +140,32 @@ namespace AIRenderer.Models
             OnPropertyChanged(nameof(ApiUrl));
             OnPropertyChanged(nameof(ModelList));
             OnPropertyChanged(nameof(SelectedModelItem));
+            OnPropertyChanged(nameof(IsImageSizeEnabled));
+            OnPropertyChanged(nameof(IsSourceImageModeEnabled));
         }
 
         // Display names for UI
-        public string SelectedProviderDisplayName => _selectedProviderItem?.DisplayName ?? _currentProviderConfig?.DisplayName ?? "Gemini";
+        public string SelectedProviderDisplayName => _selectedProviderItem?.DisplayName ?? _currentProviderConfig?.DisplayName ?? "Bltcy";
+        public bool IsImageSizeEnabled => _selectedProviderItem?.ApiFormat != "images_generations";
+        public bool IsSourceImageModeEnabled => _selectedProviderItem?.ApiFormat == "images_generations" || IsApiYiGptImage2OpenAI;
+        private bool IsApiYiGptImage2OpenAI
+        {
+            get
+            {
+                if (_selectedProviderItem?.ApiFormat != "openai" ||
+                    !_selectedModel.Equals("gpt-image-2", StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                try
+                {
+                    var host = new Uri(_selectedProviderItem.BaseUrl ?? "").Host;
+                    return host.Equals("api.apiyi.com", StringComparison.OrdinalIgnoreCase) ||
+                           host.Equals("vip.apiyi.com", StringComparison.OrdinalIgnoreCase) ||
+                           host.Equals("b.apiyi.com", StringComparison.OrdinalIgnoreCase);
+                }
+                catch { return false; }
+            }
+        }
         public string SelectedModelDisplayName
         {
             get
@@ -158,22 +188,50 @@ namespace AIRenderer.Models
         // Model display names for current provider
         public Dictionary<string, string> ModelDisplayNames { get; private set; } = new Dictionary<string, string>();
 
-        // Preset style templates
-        public List<StyleTemplate> StyleTemplates { get; } = new List<StyleTemplate>
+        // Prompt templates (user-editable, persisted)
+        private ObservableCollection<PromptTemplate> _promptTemplates;
+        public ObservableCollection<PromptTemplate> PromptTemplates
         {
-            new StyleTemplate { Name = "Custom", Prompt = "" },
-            new StyleTemplate { Name = "建筑渲染", Prompt = "Professional architectural rendering with photorealistic lighting, high dynamic range (HDR), ambient occlusion, soft shadows, depth of field, ultra-detailed textures, 4K resolution, clean white background or neutral gray studio backdrop, architectural photography style with proper perspective and vanishing points" },
-            new StyleTemplate { Name = "MIR风格", Prompt = "MIR architectural visualization style, cinematic rendering, moody atmosphere with dramatic lighting, high contrast, photorealistic finish, unreal engine 5 quality, architectural magazine editorial style, wide angle lens perspective, hyper-detailed render with lens flare and bloom effects" },
-            new StyleTemplate { Name = "手绘草图", Prompt = "Architectural sketch rendered in realistic hand-drawn graphite pencil technique on textured paper, architectural line drawing with proper proportions, architectural presentation sketch style, loose gestural strokes, cross-hatching for shading, sketchbook aesthetic, white or cream paper background" },
-            new StyleTemplate { Name = "赛博朋克", Prompt = "Cyberpunk aesthetic with neon lighting, reflective wet surfaces, holographic billboards, volumetric fog, dramatic low-angle shot, futuristic cityscape at night, cinematic color grading with cyan and magenta accents, Blade Runner inspired atmosphere, high contrast, lens flare, bokeh" },
-            new StyleTemplate { Name = "极简主义", Prompt = "Minimalist architectural photography, clean geometric compositions, abundant negative space, soft natural lighting from large windows, monochrome or neutral color palette, high-key studio lighting, Hasselblad medium format camera quality, architectural digest editorial style, pristine white backgrounds" },
-            new StyleTemplate { Name = "室内设计", Prompt = "Interior design photography with warm ambient lighting, golden hour natural light streaming through windows, cozy atmosphere, professional interior magazine shoot, depth of field with subject in focus and blurred background, 35mm lens perspective, lifestyle photography style, high-end residential interior, proper white balance" },
-            new StyleTemplate { Name = "写实摄影", Prompt = "Professional architectural photography shot with Canon EOS R5 or Sony A7R V, 24-70mm f/2.8 lens, proper exposure with f/8 for maximum sharpness, perspective correction, architectural tripod setup, neutral density filters for long exposure, hyperfocal distance focusing, commercial real estate photography style" },
-            new StyleTemplate { Name = "黄昏氛围", Prompt = "Golden hour architectural photography with warm sunset lighting casting long dramatic shadows, sky gradient from orange to purple, silhouette effect, romantic mood, cinematic landscape photography, time-lapse inspired aesthetic, professional architectural twilight shot, warm color temperature around 3200K" },
-            new StyleTemplate { Name = "水彩画", Prompt = "Watercolor painting illustration style, soft bleeding colors, wet-on-wet technique, architectural subject rendered in artistic watercolor, light and airy palette, delicate brush strokes, textured watercolor paper background, architectural illustration in art gallery style" },
-            new StyleTemplate { Name = "电影海报", Prompt = "Movie poster style composition, dramatic cinematic lighting, shallow depth of field, subject framed as hero, cinematic color grading with teal and orange tones, film grain texture, anamorphic lens flare, epic wide shot, IMAX aspect ratio, Hollywood movie production quality" }
-        };
+            get => _promptTemplates;
+            set { _promptTemplates = value; OnPropertyChanged(); }
+        }
 
+        private PromptTemplate _selectedPromptTemplate;
+        public PromptTemplate SelectedPromptTemplate
+        {
+            get => _selectedPromptTemplate;
+            set
+            {
+                _selectedPromptTemplate = value;
+                OnPropertyChanged();
+                if (value != null)
+                    Prompt = value.Prompt ?? "";
+            }
+        }
+
+        // Reference image library (stored as base64 strings)
+        private ObservableCollection<ReferenceImageItem> _referenceImages;
+        public ObservableCollection<ReferenceImageItem> ReferenceImages
+        {
+            get => _referenceImages;
+            set { _referenceImages = value; OnPropertyChanged(); }
+        }
+
+        private ReferenceImageItem _selectedReferenceImage;
+        public ReferenceImageItem SelectedReferenceImage
+        {
+            get => _selectedReferenceImage;
+            set { _selectedReferenceImage = value; OnPropertyChanged(); }
+        }
+
+        private ObservableCollection<ReferenceImageItem> _activeReferenceImages = new ObservableCollection<ReferenceImageItem>();
+        public ObservableCollection<ReferenceImageItem> ActiveReferenceImages
+        {
+            get => _activeReferenceImages;
+            set { _activeReferenceImages = value ?? new ObservableCollection<ReferenceImageItem>(); OnPropertyChanged(); }
+        }
+
+        // Keep for batch mode compat
         private StyleTemplate _selectedStyle;
 
         // Aspect ratio presets
@@ -210,14 +268,35 @@ namespace AIRenderer.Models
             "2K",
             "4K"
         };
+
+        public List<ModelItem> SourceImageModes { get; } = new List<ModelItem>
+        {
+            new ModelItem { DisplayName = "速度模式（最长边 1024）", Model = "speed" },
+            new ModelItem { DisplayName = "常规模式（最长边 1536）", Model = "balanced" },
+            new ModelItem { DisplayName = "精细模式（不压缩）", Model = "quality" }
+        };
+
+        private ModelItem _selectedSourceImageModeItem;
+        public ModelItem SelectedSourceImageModeItem
+        {
+            get => _selectedSourceImageModeItem ?? SourceImageModes[1];
+            set
+            {
+                _selectedSourceImageModeItem = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(SelectedSourceImageMode));
+            }
+        }
+
+        public string SelectedSourceImageMode => SelectedSourceImageModeItem?.Model ?? "balanced";
+
         public StyleTemplate SelectedStyle
         {
-            get => _selectedStyle ?? StyleTemplates[0];
+            get => _selectedStyle;
             set
             {
                 _selectedStyle = value;
                 OnPropertyChanged();
-                // Clear prompt when selecting a style (replace mode)
                 if (value != null && value.Name != "None")
                 {
                     Prompt = value.Prompt ?? "";
@@ -239,13 +318,19 @@ namespace AIRenderer.Models
                 }
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(SelectedModel));
+                OnPropertyChanged(nameof(IsSourceImageModeEnabled));
             }
         }
 
         public string SelectedModel
         {
             get => _selectedModel;
-            set { _selectedModel = value; OnPropertyChanged(); }
+            set
+            {
+                _selectedModel = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsSourceImageModeEnabled));
+            }
         }
 
         public string ApiUrl
@@ -296,6 +381,18 @@ namespace AIRenderer.Models
             set { _sourceHeight = value; OnPropertyChanged(); }
         }
 
+        public string VertexProject
+        {
+            get => _vertexProject;
+            set { _vertexProject = value; OnPropertyChanged(); }
+        }
+
+        public string VertexLocation
+        {
+            get => _vertexLocation;
+            set { _vertexLocation = value; OnPropertyChanged(); }
+        }
+
         public void SetSourceDimensions(int width, int height)
         {
             SourceWidth = width;
@@ -316,6 +413,35 @@ namespace AIRenderer.Models
     {
         public string Name { get; set; }
         public string Prompt { get; set; }
+    }
+
+    public class PromptTemplate
+    {
+        public string Id { get; set; } = Guid.NewGuid().ToString();
+        public string Name { get; set; }
+        public string Prompt { get; set; }
+    }
+
+    public class ReferenceImageItem : INotifyPropertyChanged
+    {
+        public string Id { get; set; } = Guid.NewGuid().ToString();
+        public string Name { get; set; }
+        private string _displayLabel;
+        public string DisplayLabel
+        {
+            get => _displayLabel;
+            set
+            {
+                if (_displayLabel == value)
+                    return;
+                _displayLabel = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DisplayLabel)));
+            }
+        }
+        public string Base64Data { get; set; } // Retained for migration only
+        public string FilePath { get; set; }
+
+        public event PropertyChangedEventHandler PropertyChanged;
     }
 
     public class AspectRatio

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:AIRenderer.Views"
         xmlns:svc="clr-namespace:AIRenderer.Services"
-        Title="Chameleon AI Renderer" Height="700" Width="1100"
+        Title="TuoJie AI Renderer" Height="700" Width="1100"
         WindowStartupLocation="CenterScreen"
         Background="#F5F5F5"
         KeyDown="Window_KeyDown">
@@ -117,15 +117,84 @@
                     <GroupBox Grid.Row="0" Header="{Binding [Source Image], Source={StaticResource L}}" Margin="0,0,0,8">
                         <Border Background="#FAFAFA" BorderBrush="#DDD" BorderThickness="1">
                             <Grid>
-                                <TextBlock Text="Click 'Capture View' to capture viewport"
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="{Binding [Import model hint], Source={StaticResource L}}"
+                                           Grid.Row="0"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"
                                            Foreground="#999" FontSize="14"
                                            Visibility="{Binding HasSourceImage, Converter={StaticResource InvBoolToVis}}"/>
-                                <Image Source="{Binding SourceImage}" Stretch="Uniform" Margin="4"
+                                <Image Grid.Row="0" Source="{Binding SourceImage}" Stretch="Uniform" Margin="4"
                                        Cursor="Hand"
                                        Tag="{Binding SourceImage}"
                                        MouseLeftButtonUp="AnyImage_PreviewClick"
                                        Visibility="{Binding HasSourceImage, Converter={StaticResource BoolToVis}}"/>
+                                <InkCanvas Grid.Row="0" x:Name="MaskInkCanvas"
+                                           Background="Transparent"
+                                           Visibility="Collapsed"
+                                           IsHitTestVisible="False"
+                                           Margin="4"/>
+                                <Border Grid.Row="1"
+                                        Background="#F3F3F3"
+                                        BorderBrush="#DDD"
+                                        BorderThickness="0,1,0,0"
+                                        Padding="6"
+                                        Visibility="{Binding HasActiveReferences, Converter={StaticResource BoolToVis}}">
+                                    <DockPanel LastChildFill="True">
+                                        <TextBlock DockPanel.Dock="Left"
+                                                   Text="参考图"
+                                                   FontSize="11"
+                                                   Foreground="#666"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,0,8,0"/>
+                                        <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                                      VerticalScrollBarVisibility="Disabled">
+                                            <ItemsControl ItemsSource="{Binding Settings.ActiveReferenceImages}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <StackPanel Orientation="Horizontal"/>
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border Width="72"
+                                                                Height="62"
+                                                                Background="White"
+                                                                BorderBrush="#D8D8D8"
+                                                                BorderThickness="1"
+                                                                Margin="0,0,6,0">
+                                                            <Grid>
+                                                                <Image Source="{Binding FilePath}"
+                                                                       Stretch="UniformToFill"/>
+                                                                <Border Background="#AA000000"
+                                                                        HorizontalAlignment="Left"
+                                                                        VerticalAlignment="Top"
+                                                                        Padding="4,1">
+                                                                    <TextBlock FontSize="10"
+                                                                               Foreground="White"
+                                                                               Text="{Binding DisplayLabel}"/>
+                                                                </Border>
+                                                                <Button Content="X"
+                                                                        Width="18"
+                                                                        Height="18"
+                                                                        FontSize="10"
+                                                                        HorizontalAlignment="Right"
+                                                                        VerticalAlignment="Top"
+                                                                        Background="#D9534F"
+                                                                        Foreground="White"
+                                                                        BorderThickness="0"
+                                                                        Command="{Binding DataContext.RemoveActiveReferenceCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                        CommandParameter="{Binding}"/>
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </DockPanel>
+                                </Border>
                             </Grid>
                         </Border>
                     </GroupBox>
@@ -337,6 +406,73 @@
                         <TextBlock Text="{Binding [1. CAPTURE], Source={StaticResource L}}" Style="{StaticResource SectionHeader}"/>
                         <Button Content="{Binding [Capture Active View], Source={StaticResource L}}" Command="{Binding CaptureCommand}"
                                 Style="{StaticResource BtnPrimary}" Margin="0,0,0,4"/>
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/>
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Content="上传本地图片" Command="{Binding UploadImageCommand}"
+                                    Style="{StaticResource BtnSecondary}"/>
+                            <Button Grid.Column="2" Content="参考图库" Command="{Binding OpenReferenceLibraryCommand}"
+                                    Style="{StaticResource BtnSecondary}"/>
+                        </Grid>
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/>
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Content="添加多图参考" Command="{Binding AddReferenceImagesCommand}"
+                                    Style="{StaticResource BtnSecondary}"/>
+                            <Button Grid.Column="2" Content="从图库添加" Command="{Binding AddReferenceImagesFromLibraryCommand}"
+                                    Style="{StaticResource BtnSecondary}"/>
+                            <Button Grid.Column="4" Content="清空参考图" Command="{Binding ClearActiveReferencesCommand}"
+                                    Style="{StaticResource BtnSecondary}"/>
+                        </Grid>
+                        <TextBlock Text="{Binding ActiveReferenceSummary}" FontSize="11" Foreground="#777"
+                                   Margin="0,0,0,6"/>
+                        <Grid x:Name="MaskEntryPanel" Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                            </Grid.ColumnDefinitions>
+                            <Button Content="遮罩修改" Click="StartMaskEdit_Click"
+                                    IsEnabled="{Binding CanUseMaskEdit}"
+                                    Style="{StaticResource BtnPrimary}"/>
+                        </Grid>
+                        <StackPanel Visibility="{Binding IsMaskEditing, Converter={StaticResource BoolToVis}}" Margin="0,0,0,4">
+                            <TextBlock Text="请涂抹需要修改的区域，并输入希望如何修改"
+                                       FontSize="11" Foreground="#777" Margin="0,0,0,4"/>
+                            <TextBox Text="{Binding MaskEditPrompt, UpdateSourceTrigger=PropertyChanged}"
+                                     Padding="8,6" FontSize="12" BorderBrush="#D7B56D" BorderThickness="1"
+                                     TextWrapping="Wrap" AcceptsReturn="True" Height="52"
+                                     VerticalScrollBarVisibility="Auto" Margin="0,0,0,6"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="38"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="画笔" FontSize="11" Foreground="#777"
+                                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <Slider x:Name="MaskBrushSizeSlider"
+                                        Grid.Column="1"
+                                        Minimum="2" Maximum="32" Value="8"
+                                        TickFrequency="2" IsSnapToTickEnabled="True"
+                                        ValueChanged="MaskBrushSizeSlider_ValueChanged"/>
+                                <TextBlock Grid.Column="2"
+                                           Text="{Binding Value, ElementName=MaskBrushSizeSlider, StringFormat={}{0:F0}}"
+                                           FontSize="11" Foreground="#777"
+                                           HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                            </Grid>
+                        </StackPanel>
+                        <Grid x:Name="MaskEditPanel" Margin="0,0,0,4" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/>
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Content="重置" Click="ResetMask_Click"
+                                    Style="{StaticResource BtnSecondary}"/>
+                            <Button Grid.Column="2" Content="取消遮罩" Click="CancelMaskEdit_Click"
+                                    Style="{StaticResource BtnSecondary}"/>
+                            <Button Grid.Column="4" Content="提交修改" Click="SubmitMaskEdit_Click"
+                                    Style="{StaticResource BtnPrimary}"/>
+                        </Grid>
                     </StackPanel>
 
                     <!-- ── BATCH: View controls ── -->
@@ -426,17 +562,76 @@
                               DisplayMemberPath="DisplayName"
                               Padding="8,6" FontSize="12" Margin="0,0,0,8"/>
 
-                    <TextBlock Text="{Binding [Style Template], Source={StaticResource L}}" Style="{StaticResource Label}"/>
-                    <ComboBox ItemsSource="{Binding Settings.StyleTemplates}"
-                              SelectedItem="{Binding Settings.SelectedStyle}"
-                              DisplayMemberPath="Name"
-                              Padding="8,6" FontSize="12" Margin="0,0,0,8"/>
+                    <TextBlock Text="提示词库" Style="{StaticResource Label}"/>
+                    <Grid Margin="0,0,0,8">
+                        <!-- Template selector row -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="4"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <ComboBox Grid.Column="0"
+                                      ItemsSource="{Binding Settings.PromptTemplates}"
+                                      SelectedItem="{Binding Settings.SelectedPromptTemplate}"
+                                      DisplayMemberPath="Name"
+                                      IsEnabled="{Binding IsMainPromptEnabled}"
+                                      Padding="8,6" FontSize="12"
+                                      x:Name="PromptTemplateCombo"/>
+                            <!-- Delete selected template -->
+                            <Button Grid.Column="2" Content="删除"
+                                    Command="{Binding DeletePromptTemplateCommand}"
+                                    CommandParameter="{Binding SelectedItem, ElementName=PromptTemplateCombo}"
+                                    IsEnabled="{Binding IsMainPromptEnabled}"
+                                    Background="#E05555" Foreground="White" BorderThickness="0"
+                                    Padding="10,6" FontSize="12" Cursor="Hand">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="0.85"/></Trigger>
+                                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                        </Grid>
+                    </Grid>
 
                     <TextBlock Text="{Binding [Prompt], Source={StaticResource L}}" Style="{StaticResource Label}"/>
                     <TextBox Text="{Binding Settings.Prompt, UpdateSourceTrigger=PropertyChanged}"
+                             IsEnabled="{Binding IsMainPromptEnabled}"
                              Padding="8,6" FontSize="12" BorderBrush="#CCC" BorderThickness="1"
                              TextWrapping="Wrap" AcceptsReturn="True" Height="60"
                              VerticalScrollBarVisibility="Auto"/>
+                    <Button Content="保存当前提示词为模版…"
+                            Command="{Binding SavePromptTemplateCommand}"
+                            IsEnabled="{Binding IsMainPromptEnabled}"
+                            Background="#7B5EA7" Foreground="White" BorderThickness="0"
+                            Padding="0,7" FontSize="12" Cursor="Hand" Margin="0,4,0,8">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="0.85"/></Trigger>
+                                    <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+
+                    <StackPanel Visibility="Collapsed">
+                        <TextBlock Text="请涂抹需要修改的区域，并输入希望如何修改"
+                                   FontSize="11" Foreground="#777" Margin="0,0,0,4"/>
+                        <TextBox Text="{Binding MaskEditPrompt, UpdateSourceTrigger=PropertyChanged}"
+                                 Padding="8,6" FontSize="12" BorderBrush="#D7B56D" BorderThickness="1"
+                                 TextWrapping="Wrap" AcceptsReturn="True" Height="52"
+                                 VerticalScrollBarVisibility="Auto" Margin="0,0,0,8"/>
+                    </StackPanel>
 
                     <TextBox Text="{Binding Settings.SystemPrompt, UpdateSourceTrigger=PropertyChanged}"
                              Visibility="Collapsed"/>
@@ -450,12 +645,21 @@
                     <TextBlock Text="{Binding [Image Size], Source={StaticResource L}}" Style="{StaticResource Label}"/>
                     <ComboBox ItemsSource="{Binding Settings.ImageSizes}"
                               SelectedItem="{Binding Settings.SelectedImageSize}"
+                              IsEnabled="{Binding Settings.IsImageSizeEnabled}"
+                              Padding="8,6" FontSize="12" Margin="0,0,0,8"/>
+
+                    <TextBlock Text="源图速度" Style="{StaticResource Label}"/>
+                    <ComboBox ItemsSource="{Binding Settings.SourceImageModes}"
+                              SelectedItem="{Binding Settings.SelectedSourceImageModeItem}"
+                              DisplayMemberPath="DisplayName"
+                              IsEnabled="{Binding Settings.IsSourceImageModeEnabled}"
                               Padding="8,6" FontSize="12" Margin="0,0,0,8"/>
 
                     <!-- ── Action buttons ── -->
 
                     <!-- Single: Generate -->
                     <Button Content="{Binding [Generate Image], Source={StaticResource L}}" Command="{Binding GenerateCommand}"
+                            IsEnabled="{Binding IsMainPromptEnabled}"
                             Style="{StaticResource BtnPrimary}" Margin="0,12,0,8"
                             Visibility="{Binding IsSingleMode, Converter={StaticResource BoolToVis}}"/>
 
@@ -469,8 +673,16 @@
 
                     <!-- Single: Save + Use as Source + Clear -->
                     <StackPanel Visibility="{Binding IsSingleMode, Converter={StaticResource BoolToVis}}">
-                        <Button Content="{Binding [Save Result], Source={StaticResource L}}" Command="{Binding SaveResultCommand}"
-                                Style="{StaticResource BtnLight}" Margin="0,0,0,8"/>
+                        <!-- Download + Save to Ref Library -->
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition/>
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Content="下载图片" Command="{Binding SaveResultCommand}"
+                                    Style="{StaticResource BtnLight}"/>
+                            <Button Grid.Column="2" Content="存入参考图" Command="{Binding SaveToReferenceLibraryCommand}"
+                                    Style="{StaticResource BtnGreen}"/>
+                        </Grid>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition/>
@@ -504,8 +716,12 @@
                 <TextBlock Text="{Binding BatchVM.StatusMessage}" VerticalAlignment="Center"
                            Foreground="#555" FontSize="12"
                            Visibility="{Binding IsBatchMode, Converter={StaticResource BoolToVis}}"/>
-                <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <ProgressBar IsIndeterminate="True" Width="100" Height="4"
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding GenerationProgressText}" FontSize="11" Foreground="#666"
+                               Margin="0,0,8,0"
+                               Visibility="{Binding IsGenerating, Converter={StaticResource BoolToVis}}"/>
+                    <ProgressBar Width="120" Height="5" Minimum="0" Maximum="100"
+                                 Value="{Binding GenerationProgress}"
                                  Visibility="{Binding IsGenerating, Converter={StaticResource BoolToVis}}"/>
                     <ProgressBar IsIndeterminate="True" Width="100" Height="4"
                                  Visibility="{Binding BatchVM.IsRunning, Converter={StaticResource BoolToVis}}"/>

@@ -31,7 +31,7 @@ namespace AIRenderer.Services
 
             // ── Section headers ────────────────────────────────────────────
             { "SETTINGS",                  new Dictionary<Language, string> { { Language.Chinese, "设置" },           { Language.English, "SETTINGS" } } },
-            { "1. CAPTURE",                new Dictionary<Language, string> { { Language.Chinese, "1. 截图" },        { Language.English, "1. CAPTURE" } } },
+            { "1. CAPTURE",                new Dictionary<Language, string> { { Language.Chinese, "1. 导入模型" },    { Language.English, "1. IMPORT MODEL" } } },
             { "1. BATCH VIEWS",            new Dictionary<Language, string> { { Language.Chinese, "1. 批量视图" },    { Language.English, "1. BATCH VIEWS" } } },
             { "2. SERVICE PROVIDER",       new Dictionary<Language, string> { { Language.Chinese, "2. 服务商" },      { Language.English, "2. SERVICE PROVIDER" } } },
             { "2. STYLE REFERENCE",        new Dictionary<Language, string> { { Language.Chinese, "2. 风格参考图" },  { Language.English, "2. STYLE REFERENCE" } } },
@@ -48,7 +48,7 @@ namespace AIRenderer.Services
             { "Provider:",      new Dictionary<Language, string> { { Language.Chinese, "服务商：" },   { Language.English, "Provider: " } } },
 
             // ── Buttons ─────────────────────────────────────────────────────
-            { "Capture Active View",        new Dictionary<Language, string> { { Language.Chinese, "捕获当前视图" },      { Language.English, "Capture Active View" } } },
+            { "Capture Active View",        new Dictionary<Language, string> { { Language.Chinese, "导入模型" },          { Language.English, "Import Model" } } },
             { "Load & Capture Named Views", new Dictionary<Language, string> { { Language.Chinese, "加载并捕获命名视图" }, { Language.English, "Load & Capture Named Views" } } },
             { "Select All",                 new Dictionary<Language, string> { { Language.Chinese, "全选" },             { Language.English, "Select All" } } },
             { "Deselect All",               new Dictionary<Language, string> { { Language.Chinese, "取消全选" },         { Language.English, "Deselect All" } } },
@@ -69,8 +69,12 @@ namespace AIRenderer.Services
             // ── Placeholders / info ─────────────────────────────────────────
             { "Click 'Capture View' to capture viewport",
                 new Dictionary<Language, string> {
-                    { Language.Chinese, "点击「捕获当前视图」截取视口" },
-                    { Language.English, "Click 'Capture View' to capture viewport" } } },
+                    { Language.Chinese, "点击「导入模型」导入当前视口" },
+                    { Language.English, "Click 'Import Model' to import the current viewport" } } },
+            { "Import model hint",
+                new Dictionary<Language, string> {
+                    { Language.Chinese, "点击「导入模型」导入当前视口" },
+                    { Language.English, "Click 'Import Model' to import the current viewport" } } },
             { "Generated image will appear here",
                 new Dictionary<Language, string> {
                     { Language.Chinese, "生成的图片将显示在这里" },

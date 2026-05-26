@@ -1,9 +1,10 @@
 <Window x:Class="AIRenderer.Views.AddProviderDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Add Custom Provider" Height="450" Width="430"
+        Title="Add Custom Provider" Height="500" Width="450"
+        MinHeight="450" MinWidth="400"
         WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize"
+        ResizeMode="CanResize"
         Background="#F5F5F5">
     <Window.Resources>
         <Style x:Key="Label" TargetType="TextBlock">
@@ -41,6 +42,7 @@
                       SelectionChanged="ApiFormatCombo_SelectionChanged">
                 <ComboBoxItem Content="Gemini Compatible  (generateContent)" Tag="gemini"/>
                 <ComboBoxItem Content="OpenAI Images  (gpt-image-1 / images/edits)" Tag="openai"/>
+                <ComboBoxItem Content="Generations  (images/generations 图生图)" Tag="images_generations"/>
             </ComboBox>
 
             <TextBlock Text="Auth Type" Style="{StaticResource Label}"/>

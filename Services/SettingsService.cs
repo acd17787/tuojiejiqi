@@ -4,6 +4,7 @@ using Rhino;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace AIRenderer.Services
 {
@@ -19,6 +20,10 @@ namespace AIRenderer.Services
         /// <summary>null 表示使用内置 SelectedProvider；非 null 表示自定义服务商 ID</summary>
         public string SelectedProviderId { get; set; } = null;
         public int LanguageIndex { get; set; } = 0;
+        public List<PromptTemplate> PromptTemplates { get; set; } = new List<PromptTemplate>();
+        public List<ReferenceImageItem> ReferenceImages { get; set; } = new List<ReferenceImageItem>();
+        public string VertexProject { get; set; } = "";
+        public string VertexLocation { get; set; } = "us-central1";
     }
 
     public static class SettingsService
@@ -53,7 +58,7 @@ namespace AIRenderer.Services
             {
                 var builtInId = settings.SelectedProvider.ToString();
                 provider = allProviders.Find(p => p.Id == builtInId)
-                    ?? ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(settings.SelectedProvider));
+                    ?? ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.BltAI));
                 if (settings.ApiKeys?.ContainsKey(settings.SelectedProvider) == true)
                     apiKey = settings.ApiKeys[settings.SelectedProvider];
             }
@@ -126,11 +131,11 @@ namespace AIRenderer.Services
                     {
                         Id = key,
                         DisplayName = !string.IsNullOrEmpty(ov.DisplayName) ? ov.DisplayName : config.DisplayName,
-                        BaseUrl = !string.IsNullOrEmpty(ov.BaseUrl) ? ov.BaseUrl : config.BaseUrl,
+                        BaseUrl = ProviderItem.NormalizeBaseUrl(!string.IsNullOrEmpty(ov.BaseUrl) ? ov.BaseUrl : config.BaseUrl),
                         Models = models,
                         DefaultModel = !string.IsNullOrEmpty(ov.DefaultModel) ? ov.DefaultModel : (models.Count > 0 ? models[0] : config.DefaultModel),
                         IsCustom = false,
-                        AuthType = ov.AuthType ?? (config.Provider == ApiProvider.Gemini ? "goog" : "bearer"),
+                        AuthType = ov.AuthType ?? "bearer",
                         ApiFormat = ov.ApiFormat ?? "gemini",
                         ApiKeyUrl = config.ApiKeyUrl,
                         BuiltInProvider = config.Provider
@@ -234,6 +239,98 @@ namespace AIRenderer.Services
             return (apiKey, selectedModel, builtIn);
         }
 
+        // ── Prompt Templates ──────────────────────────────────────────────────
+
+        public static List<PromptTemplate> LoadPromptTemplates()
+        {
+            return LoadSettingsInternal().PromptTemplates ?? new List<PromptTemplate>();
+        }
+
+        public static void SavePromptTemplates(List<PromptTemplate> templates)
+        {
+            try
+            {
+                if (!Directory.Exists(SettingsFolder)) Directory.CreateDirectory(SettingsFolder);
+                var settings = LoadSettingsInternal();
+                settings.PromptTemplates = templates ?? new List<PromptTemplate>();
+                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
+            }
+            catch (Exception ex) { RhinoApp.WriteLine($"Error saving prompt templates: {ex.Message}"); }
+        }
+
+        // ── Reference Images ─────────────────────────────────────────────────
+
+        public static List<ReferenceImageItem> LoadReferenceImages()
+        {
+            var settings = LoadSettingsInternal();
+            var images = settings.ReferenceImages ?? new List<ReferenceImageItem>();
+
+            bool needsSave = false;
+            var refDir = Path.Combine(SettingsFolder, "references");
+
+            foreach (var img in images)
+            {
+                if (!string.IsNullOrEmpty(img.Base64Data) && string.IsNullOrEmpty(img.FilePath))
+                {
+                    try
+                    {
+                        if (!Directory.Exists(refDir)) Directory.CreateDirectory(refDir);
+                        
+                        var bytes = Convert.FromBase64String(img.Base64Data);
+                        var newPath = Path.Combine(refDir, $"{img.Id}.png");
+                        File.WriteAllBytes(newPath, bytes);
+                        
+                        img.FilePath = newPath;
+                        img.Base64Data = null; // Clear out the bulky data
+                        needsSave = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        RhinoApp.WriteLine($"Error migrating reference image {img.Name}: {ex.Message}");
+                    }
+                }
+            }
+
+            if (needsSave)
+            {
+                settings.ReferenceImages = images;
+                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
+            }
+
+            return images;
+        }
+
+        public static void SaveReferenceImages(List<ReferenceImageItem> images)
+        {
+            try
+            {
+                if (!Directory.Exists(SettingsFolder)) Directory.CreateDirectory(SettingsFolder);
+                var settings = LoadSettingsInternal();
+                settings.ReferenceImages = images ?? new List<ReferenceImageItem>();
+                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
+            }
+            catch (Exception ex) { RhinoApp.WriteLine($"Error saving reference images: {ex.Message}"); }
+        }
+
+        public static (string project, string location) LoadVertexSettings()
+        {
+            var settings = LoadSettingsInternal();
+            return (settings.VertexProject, settings.VertexLocation);
+        }
+
+        public static void SaveVertexSettings(string project, string location)
+        {
+            try
+            {
+                if (!Directory.Exists(SettingsFolder)) Directory.CreateDirectory(SettingsFolder);
+                var settings = LoadSettingsInternal();
+                settings.VertexProject = project;
+                settings.VertexLocation = location;
+                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
+            }
+            catch (Exception ex) { RhinoApp.WriteLine($"Error saving vertex settings: {ex.Message}"); }
+        }
+
         public static int LoadLanguageIndex()
         {
             return LoadSettingsInternal().LanguageIndex;
@@ -261,7 +358,11 @@ namespace AIRenderer.Services
                 if (File.Exists(SettingsFile))
                 {
                     var settings = JsonConvert.DeserializeObject<AppSettings>(File.ReadAllText(SettingsFile));
-                    if (settings != null) return settings;
+                    if (settings != null)
+                    {
+                        NormalizeSettings(settings);
+                        return settings;
+                    }
                 }
             }
             catch (Exception ex)
@@ -274,6 +375,52 @@ namespace AIRenderer.Services
             var culture = System.Globalization.CultureInfo.CurrentUICulture;
             defaults.LanguageIndex = culture.Name.StartsWith("zh") ? 0 : 1;
             return defaults;
+        }
+
+        private static void NormalizeSettings(AppSettings settings)
+        {
+            if (settings.ApiKeys == null)
+                settings.ApiKeys = new Dictionary<ApiProvider, string>();
+            if (settings.CustomApiKeys == null)
+                settings.CustomApiKeys = new Dictionary<string, string>();
+            if (settings.CustomProviders == null)
+                settings.CustomProviders = new List<CustomProviderConfig>();
+            if (settings.BuiltInOverrides == null)
+                settings.BuiltInOverrides = new Dictionary<string, CustomProviderConfig>();
+
+            if (settings.SelectedProvider == ApiProvider.BltFlux)
+                settings.SelectedProvider = ApiProvider.BltGenerations;
+
+            if (settings.BuiltInOverrides.TryGetValue("BltFlux", out var oldFluxOverride))
+            {
+                settings.BuiltInOverrides["BltGenerations"] = oldFluxOverride;
+                settings.BuiltInOverrides.Remove("BltFlux");
+            }
+
+            settings.BuiltInOverrides.Remove("BltResponses");
+            settings.BuiltInOverrides.Remove("BltChat");
+
+            var builtInIds = new HashSet<string>(
+                ApiProviderConfig.GetAllProviders().Select(p => p.Provider.ToString()));
+            if (!string.IsNullOrEmpty(settings.SelectedProviderId) &&
+                !settings.CustomProviders.Any(p => p.Id == settings.SelectedProviderId) &&
+                !builtInIds.Contains(settings.SelectedProviderId))
+            {
+                settings.SelectedProviderId = null;
+                settings.SelectedProvider = ApiProvider.BltAI;
+            }
+
+            if (settings.SelectedProvider == ApiProvider.BltResponses ||
+                settings.SelectedProvider == ApiProvider.BltChat)
+            {
+                settings.SelectedProvider = ApiProvider.BltAI;
+            }
+
+            var selectedConfig = ApiProviderConfig.GetConfig(settings.SelectedProvider);
+            if (selectedConfig?.Models?.Contains(settings.SelectedModel) == false)
+            {
+                settings.SelectedModel = selectedConfig.DefaultModel;
+            }
         }
     }
 }
