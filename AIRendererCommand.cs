@@ -1,9 +1,6 @@
-using AIRenderer.Views;
+﻿using AIRenderer.Views;
 using Rhino;
 using Rhino.Commands;
-using Rhino.Geometry;
-using Rhino.Input;
-using Rhino.Input.Custom;
 using System;
 using System.Windows;
 

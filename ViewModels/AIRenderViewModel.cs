@@ -125,7 +125,7 @@ namespace AIRenderer.ViewModels
             // EnterMaskEdit 里那句「请切换到标准模式」的提醒，用户只会看到一个点不动的灰按钮。
             ToggleMaskEditCommand = new RelayCommand(ToggleMaskEdit, () => HasSourceImage || IsMaskEditing);
             EnterMaskEditCommand = new RelayCommand(EnterMaskEdit, () => CanUseMaskEdit);
-            FinishMaskEditCommand = new RelayCommand(FinishMaskEditState, () => IsMaskEditing);
+            FinishMaskEditCommand = new RelayCommand(FinishMaskEdit, () => IsMaskEditing);
             CancelMaskEditCommand = new RelayCommand(CancelMaskEdit, () => IsMaskEditing);
             ClearMaskStrokesCommand = new RelayCommand(ClearMaskStrokes, () => HasMaskStrokes);
             DropMaskCommand = new RelayCommand(ClearMaskStrokes, () => HasMaskStrokes || Settings.IsMaskApplied);
@@ -747,29 +747,23 @@ namespace AIRenderer.ViewModels
             if (ResultImage == null)
                 return;
 
-            var dialog = new SaveFileDialog
-            {
-                Filter = "PNG 图片|*.png|JPEG 图片|*.jpg|所有文件|*.*",
-                DefaultExt = ".png",
-                FileName = $"TuoJie-Render-{DateTime.Now:yyyyMMdd_HHmmss}"
-            };
-
             try
             {
-                // ShowDialog 也在 try 里：它的 COM 异常如果不接，就是 WPF 未处理异常（进程终止）
-                if (dialog.ShowDialog() != true)
+                var path = SaveImageDialog.AskPath($"TuoJie-Render-{DateTime.Now:yyyyMMdd_HHmmss}",
+                    "PNG 图片|*.png|JPEG 图片|*.jpg|所有文件|*.*");
+                if (path == null)
                     return;
 
                 using (var bitmap = ScreenCapture.BitmapSourceToBitmap(ResultImage))
                 {
-                    var format = Path.GetExtension(dialog.FileName).ToLowerInvariant() == ".jpg"
+                    var format = Path.GetExtension(path).ToLowerInvariant() == ".jpg"
                         ? System.Drawing.Imaging.ImageFormat.Jpeg
                         : System.Drawing.Imaging.ImageFormat.Png;
-                    bitmap.Save(dialog.FileName, format);
+                    bitmap.Save(path, format);
                 }
 
-                StatusMessage = "已保存到 " + dialog.FileName;
-                Toast("已保存 " + Path.GetFileName(dialog.FileName));
+                StatusMessage = "已保存到 " + path;
+                Toast("已保存 " + Path.GetFileName(path));
             }
             catch (Exception ex)
             {
@@ -1111,20 +1105,14 @@ namespace AIRenderer.ViewModels
                 return;
             }
 
-            var dialog = new SaveFileDialog
-            {
-                Filter = "PNG 图片|*.png|所有文件|*.*",
-                DefaultExt = ".png",
-                FileName = $"TuoJie-History-{item.CreatedAt:yyyyMMdd_HHmmss}"
-            };
-
-            if (dialog.ShowDialog() != true)
-                return;
-
             try
             {
-                File.Copy(item.FilePath, dialog.FileName, true);
-                Toast("已下载 " + Path.GetFileName(dialog.FileName));
+                var path = SaveImageDialog.AskPath($"TuoJie-History-{item.CreatedAt:yyyyMMdd_HHmmss}");
+                if (path == null)
+                    return;
+
+                File.Copy(item.FilePath, path, true);
+                Toast("已下载 " + Path.GetFileName(path));
             }
             catch (Exception ex)
             {
@@ -1239,7 +1227,7 @@ namespace AIRenderer.ViewModels
                 var totalWatch = Stopwatch.StartNew();
 
                 // 源图转换 + 参考图读取 + 服务层的请求体编码（PNG + base64，可达数 MB）都是纯 CPU/IO。
-                // 不挪走的话每次点生成都会先冻住界面 0.5~2 秒（4K 更久）。
+                // 不挪走的话每次点生成会先冻住界面几十到几百毫秒（参考图多、4K 更久）。
                 using (var sourceBitmap = await Task.Run(() => ScreenCapture.BitmapSourceToBitmap(SourceImage)))
                 {
                     var references = await Task.Run(() => LoadActiveReferenceBitmaps());
@@ -1454,8 +1442,9 @@ namespace AIRenderer.ViewModels
         }
 
         /// <summary>
-        /// 位图转 BitmapSource 内部是「克隆 + PNG 编码 + 解码」的纯 CPU 活（4K 可到 1~2 秒），
-        /// 放线程池做，避免每次生成完都卡住 UI。返回的 BitmapSource 已 Freeze，可跨线程赋值。
+        /// 位图转 BitmapSource 是纯 CPU 活（4K 十几毫秒，见 ScreenCapture 的说明），
+        /// 仍放线程池：生成流程本来就是异步的，不占界面哪怕几十毫秒。
+        /// 返回的 BitmapSource 已 Freeze，可跨线程赋值。
         /// </summary>
         private static Task<BitmapSource> ToBitmapSourceAsync(Bitmap bitmap)
             => Task.Run(() => ScreenCapture.BitmapToBitmapSource(bitmap));
@@ -1540,10 +1529,8 @@ namespace AIRenderer.ViewModels
             Toast("已启用涂抹修改，将自动使用支持精确蒙版的模型");
         }
 
-        /// <summary>完成编辑：涂过东西才算应用，否则提示未应用</summary>
-        private void FinishMaskEditState() => FinishMaskEdit(false);
-
-        /// <summary>完成编辑（供界面直接调用，例如涂抹中点击原图）</summary>
+        /// <summary>完成编辑：涂过东西才算应用，否则提示未应用。
+        /// 供命令和界面直接调用（例如涂抹中点击原图）。</summary>
         public void FinishMaskEdit() => FinishMaskEdit(false);
 
         private void FinishMaskEdit(bool silent)
@@ -1693,6 +1680,26 @@ namespace AIRenderer.ViewModels
         protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+    }
+
+    /// <summary>
+    /// 「另存为」对话框：保存结果 / 下载历史 / 灯箱下载三处共用。
+    /// 对话框构造与 ShowDialog 只写一遍——尤其「ShowDialog 必须在 try 里」这条规则，
+    /// 它的 COM 异常不接就是 WPF 未处理异常（进程终止）。
+    /// </summary>
+    internal static class SaveImageDialog
+    {
+        /// <summary>返回选中的路径；用户取消返回 null。可能抛异常，调用方接住并提示。</summary>
+        public static string AskPath(string defaultName, string filter = "PNG 图片|*.png|所有文件|*.*")
+        {
+            var dialog = new SaveFileDialog
+            {
+                Filter = filter,
+                DefaultExt = ".png",
+                FileName = defaultName
+            };
+            return dialog.ShowDialog() == true ? dialog.FileName : null;
         }
     }
 

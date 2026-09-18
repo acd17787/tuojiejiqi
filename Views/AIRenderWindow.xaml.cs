@@ -1,7 +1,6 @@
 ﻿using AIRenderer.Models;
 using AIRenderer.Services;
 using AIRenderer.ViewModels;
-using Microsoft.Win32;
 using System;
 using System.IO;
 using System.Linq;
@@ -230,7 +229,7 @@ namespace AIRenderer.Views
             // 下载按钮在整张解码完成前不可用：否则抢在完成前点下载，存下来的是 320px 缩略图
             ShowLightbox(placeholder, title, downloadable, canDownload: false);
 
-            Task.Run(() => LoadBitmapSource(path))
+            Task.Run(() => ImageUtil.LoadWpfImage(path))
                 .ContinueWith(t =>
                 {
                     var decoded = t.IsFaulted ? null : t.Result;
@@ -281,24 +280,17 @@ namespace AIRenderer.Views
             if (_lightboxImage == null)
                 return;
 
-            var dialog = new SaveFileDialog
-            {
-                Filter = "PNG 图片|*.png|所有文件|*.*",
-                DefaultExt = ".png",
-                FileName = $"{_lightboxDownloadName}-{DateTime.Now:yyyyMMdd_HHmmss}"
-            };
-
             try
             {
-                // ShowDialog 也在 try 里：它的 COM 异常如果不接，就是 WPF 未处理异常（进程终止）
-                if (dialog.ShowDialog() != true)
+                var path = SaveImageDialog.AskPath($"{_lightboxDownloadName}-{DateTime.Now:yyyyMMdd_HHmmss}");
+                if (path == null)
                     return;
 
                 var encoder = new PngBitmapEncoder();
                 encoder.Frames.Add(BitmapFrame.Create(_lightboxImage));
-                using (var stream = File.Create(dialog.FileName))
+                using (var stream = File.Create(path))
                     encoder.Save(stream);
-                _viewModel.Toast("已保存 " + Path.GetFileName(dialog.FileName));
+                _viewModel.Toast("已保存 " + Path.GetFileName(path));
             }
             catch (Exception ex)
             {
@@ -637,29 +629,6 @@ namespace AIRenderer.Views
                 pen.EndCap = System.Drawing.Drawing2D.LineCap.Round;
                 pen.LineJoin = System.Drawing.Drawing2D.LineJoin.Round;
                 graphics.DrawLines(pen, points);
-            }
-        }
-
-        // ── 工具方法 ──────────────────────────────────────────────────────
-
-        private static BitmapSource LoadBitmapSource(string path)
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(path) || !File.Exists(path))
-                    return null;
-
-                var image = new BitmapImage();
-                image.BeginInit();
-                image.CacheOption = BitmapCacheOption.OnLoad;
-                image.UriSource = new Uri(path, UriKind.Absolute);
-                image.EndInit();
-                image.Freeze();
-                return image;
-            }
-            catch
-            {
-                return null;
             }
         }
     }

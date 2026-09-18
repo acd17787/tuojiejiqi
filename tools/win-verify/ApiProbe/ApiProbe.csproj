@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="ConversionEquivalenceProbe.cs" />
     <Reference Include="TuoJie">
       <HintPath>$(TuoJieDir)\TuoJie.dll</HintPath>
       <Private>true</Private>

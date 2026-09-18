@@ -26,7 +26,12 @@ namespace AIRenderer.Services
     public class AIRenderService : IDisposable
     {
         private readonly HttpClient _httpClient;
-        private static readonly HttpClient DownloadClient = new HttpClient(new SidecarHttpMessageHandler());
+        /// <summary>按 URL 下载生成结果。必须显式给超时：默认 100 秒，4K 结果图有
+        /// 10~30MB，慢线路上会被掐断——生成本身都给了 10 分钟，下载不该更短。</summary>
+        private static readonly HttpClient DownloadClient = new HttpClient(new SidecarHttpMessageHandler())
+        {
+            Timeout = TimeSpan.FromMinutes(3)
+        };
 
         public string LastError { get; private set; }
 

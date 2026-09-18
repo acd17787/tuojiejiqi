@@ -64,6 +64,10 @@ internal static class Program
         if (Environment.GetEnvironmentVariable("CONCURRENCY_PROBE") == "1")
             return await ConcurrencyProbe();
 
+        // 字节级转换等价性探针：纯本地 GDI+ + WPF，不需要网络 / mock / Rhino
+        if (Environment.GetEnvironmentVariable("CONVERSION_EQUIVALENCE_PROBE") == "1")
+            return ConversionEquivalenceProbe.Run();
+
         return await RunApiChecks();
     }
 

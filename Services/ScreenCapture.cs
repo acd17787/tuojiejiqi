@@ -1,4 +1,4 @@
-using Rhino;
+﻿using Rhino;
 using Rhino.Display;
 using System;
 using System.Drawing;
@@ -64,26 +64,53 @@ namespace AIRenderer.Services
         }
 
         /// <summary>
-        /// Converts BitmapSource to Bitmap
+        /// BitmapSource → GDI+ Bitmap。与 BitmapToBitmapSource 相对的同一条热路径
+        /// （每次生成都要把源图转成 Bitmap），同样用 CopyPixels 直接拷贝，不走
+        /// PNG 编码+解码往返（原来经 ImageUtil.FromStream 还要多一次 Detach 拷贝）。
+        /// 输出与旧路径同为 32bppArgb、DPI 不变。
         /// </summary>
-        public static Bitmap BitmapSourceToBitmap(BitmapSource bitmapSource)
+        public static Bitmap BitmapSourceToBitmap(BitmapSource source)
         {
-            if (bitmapSource == null)
+            if (source == null)
                 return null;
 
-            var encoder = new PngBitmapEncoder();
-            encoder.Frames.Add(BitmapFrame.Create(bitmapSource));
+            // CopyPixels 需要确切的像素格式：不是 Bgra32 就显式转一次
+            // （原来这条路径靠 PNG 编解码隐式完成格式统一）
+            var converted = source.Format == System.Windows.Media.PixelFormats.Bgra32
+                ? source
+                : new FormatConvertedBitmap(source, System.Windows.Media.PixelFormats.Bgra32, null, 0);
 
-            using (MemoryStream ms = new MemoryStream())
+            var bitmap = new Bitmap(converted.PixelWidth, converted.PixelHeight,
+                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            var data = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height),
+                System.Drawing.Imaging.ImageLockMode.WriteOnly,
+                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            try
             {
-                encoder.Save(ms);
-                ms.Position = 0;
-                return ImageUtil.FromStream(ms);
+                converted.CopyPixels(System.Windows.Int32Rect.Empty, data.Scan0,
+                    data.Stride * bitmap.Height, data.Stride);
             }
+            finally
+            {
+                bitmap.UnlockBits(data);
+            }
+
+            var dpiX = source.DpiX;
+            var dpiY = source.DpiY;
+            bitmap.SetResolution(dpiX > 0 ? (float)dpiX : 96f, dpiY > 0 ? (float)dpiY : 96f);
+            return bitmap;
         }
 
         /// <summary>
-        /// Converts Bitmap to BitmapSource for WPF display
+        /// Bitmap → 可跨线程使用的 BitmapSource。
+        ///
+        /// 用 LockBits 逐行拷给 BitmapSource.Create：纯内存拷贝，没有 PNG 编码+解码那两步
+        /// （4K 一次要 1~2 秒）。原来的实现首选「clone + PNG 往返」、失败才退到这条，
+        /// 顺序恰好把最慢的放最前面；而且三条路径里有两条是同一个 PNG 往返的两次重试，
+        /// 只有这条是真正不同的策略。两条路径的输出已用 ApiProbe 逐字节比对过等价
+        /// （tools/win-verify/ApiProbe，CONVERSION_EQUIVALENCE_PROBE=1）。
+        ///
+        /// 失败返回 null：调用方按「结果图转换失败」提示，宁可重试也不要拿到一张坏图。
         /// </summary>
         public static BitmapSource BitmapToBitmapSource(Bitmap bitmap)
         {
@@ -92,98 +119,44 @@ namespace AIRenderer.Services
 
             try
             {
-                using (var safeBitmap = bitmap.Clone(
-                    new Rectangle(0, 0, bitmap.Width, bitmap.Height),
-                    System.Drawing.Imaging.PixelFormat.Format32bppArgb))
-                {
-                    return BitmapToBitmapSourceFromClone(safeBitmap);
-                }
-            }
-            catch (Exception ex)
-            {
-                RhinoApp.WriteLine($"BitmapToBitmapSource clone path error: {ex.Message}");
-            }
+                var width = bitmap.Width;
+                var height = bitmap.Height;
+                var stride = width * 4;
+                var pixels = new byte[height * stride];
 
-            try
-            {
-                // Method 1: Using memory stream
-                using (MemoryStream ms = new MemoryStream())
-                {
-                    bitmap.Save(ms, ImageFormat.Png);
-                    ms.Position = 0;
+                var data = bitmap.LockBits(
+                    new Rectangle(0, 0, width, height),
+                    System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
 
-                    var bitmapImage = new BitmapImage();
-                    bitmapImage.BeginInit();
-                    bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-                    bitmapImage.StreamSource = ms;
-                    bitmapImage.EndInit();
-                    bitmapImage.Freeze();
-
-                    return bitmapImage;
-                }
-            }
-            catch (Exception ex)
-            {
-                RhinoApp.WriteLine($"BitmapToBitmapSource error: {ex.Message}");
                 try
                 {
-                    // Method 2: Using CopyPixels via interop
-                    var width = bitmap.Width;
-                    var height = bitmap.Height;
-                    var stride = width * 4;
-                    var pixels = new byte[height * stride];
-
-                    var bitmapData = bitmap.LockBits(
-                        new Rectangle(0, 0, width, height),
-                        System.Drawing.Imaging.ImageLockMode.ReadOnly,
-                        System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-
-                    try
-                    {
-                        System.Runtime.InteropServices.Marshal.Copy(bitmapData.Scan0, pixels, 0, pixels.Length);
-                    }
-                    finally
-                    {
-                        // 不放在 finally 里的话，Marshal.Copy 抛异常会让位图一直处于锁定状态
-                        bitmap.UnlockBits(bitmapData);
-                    }
-
-                    var bitmapSource = BitmapSource.Create(
-                        width, height,
-                        bitmap.HorizontalResolution,
-                        bitmap.VerticalResolution,
-                        System.Windows.Media.PixelFormats.Bgra32,
-                        null,
-                        pixels,
-                        stride);
-
-                    bitmapSource.Freeze();
-                    return bitmapSource;
+                    // 不放 finally 里的话，Marshal.Copy 抛异常会让位图一直处于锁定状态
+                    System.Runtime.InteropServices.Marshal.Copy(data.Scan0, pixels, 0, pixels.Length);
                 }
-                catch (Exception ex2)
+                finally
                 {
-                    RhinoApp.WriteLine($"Fallback conversion error: {ex2.Message}");
-                    return null;
+                    bitmap.UnlockBits(data);
                 }
+
+                var dpiX = bitmap.HorizontalResolution;
+                var dpiY = bitmap.VerticalResolution;
+                var source = BitmapSource.Create(
+                    width, height,
+                    dpiX > 0 ? dpiX : 96,
+                    dpiY > 0 ? dpiY : 96,
+                    System.Windows.Media.PixelFormats.Bgra32,
+                    null,
+                    pixels,
+                    stride);
+
+                source.Freeze();
+                return source;
             }
-        }
-
-        private static BitmapSource BitmapToBitmapSourceFromClone(Bitmap bitmap)
-        {
-            using (MemoryStream ms = new MemoryStream())
+            catch (Exception ex)
             {
-                bitmap.Save(ms, ImageFormat.Png);
-                ms.Position = 0;
-
-                var bitmapImage = new BitmapImage();
-                bitmapImage.BeginInit();
-                bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-                bitmapImage.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
-                bitmapImage.StreamSource = ms;
-                bitmapImage.EndInit();
-                bitmapImage.Freeze();
-
-                return bitmapImage;
+                RhinoApp.WriteLine($"BitmapToBitmapSource failed: {ex.Message}");
+                return null;
             }
         }
     }

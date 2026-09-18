@@ -72,11 +72,12 @@ namespace AIRenderer.Services
         }
 
         /// <summary>
-        /// WPF 侧的缩略图解码。限制解码宽度——缩略图不值得把整张原图解进内存
-        /// （一张 4K 图全量解码约 33MB）。返回的图已 Freeze，可跨线程使用；
-        /// 文件不存在或解码失败返回 null。
+        /// WPF 侧的文件解码，全项目唯一一处 BitmapImage 装配。
+        /// decodePixelWidth 传 null 解整张（灯箱要看原图），传数字则限制解码宽度
+        /// （缩略图不值得把整张原图解进内存——一张 4K 图全量解码约 33MB）。
+        /// 返回的图已 Freeze，可跨线程使用；文件不存在或解码失败返回 null。
         /// </summary>
-        public static BitmapSource LoadWpfThumbnail(string path, int decodeWidth)
+        public static BitmapSource LoadWpfImage(string path, int? decodePixelWidth = null)
         {
             try
             {
@@ -87,7 +88,8 @@ namespace AIRenderer.Services
                 image.BeginInit();
                 image.CacheOption = BitmapCacheOption.OnLoad;
                 image.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
-                image.DecodePixelWidth = decodeWidth;
+                if (decodePixelWidth.HasValue)
+                    image.DecodePixelWidth = decodePixelWidth.Value;
                 image.UriSource = new Uri(path, UriKind.Absolute);
                 image.EndInit();
                 image.Freeze();
@@ -98,5 +100,9 @@ namespace AIRenderer.Services
                 return null;
             }
         }
+
+        /// <summary>列表缩略图（限宽解码），语义化封装。</summary>
+        public static BitmapSource LoadWpfThumbnail(string path, int decodeWidth)
+            => LoadWpfImage(path, decodeWidth);
     }
 }
