@@ -5,6 +5,7 @@ using Microsoft.Win32;
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Ink;
@@ -31,6 +32,12 @@ namespace AIRenderer.Views
         /// <summary>大图预览当前显示的图片，供预览里的「下载」使用</summary>
         private BitmapSource _lightboxImage;
         private string _lightboxDownloadName = "tuojie-image";
+        /// <summary>
+        /// 灯箱的「代数」令牌：每次打开 / 关闭都递增。后台解码完成回来时令牌对不上就丢弃，
+        /// 否则用户连点两张历史图时，慢的那次解码回来会覆盖后点开的图；
+        /// 关灯箱不作废的话，迟到的解码会把已经收起的浮层重新点亮。
+        /// </summary>
+        private int _lightboxGeneration;
 
         private int _lastMaskSourceWidth;
         private int _lastMaskSourceHeight;
@@ -184,13 +191,13 @@ namespace AIRenderer.Views
         private void ReferenceThumb_Click(object sender, RoutedEventArgs e)
         {
             if ((sender as FrameworkElement)?.Tag is ReferenceImageItem item)
-                OpenLightbox(LoadBitmapSource(item.FilePath), item.Name, false);
+                OpenLightboxFromFile(item.FilePath, item.Name, false, item.Thumbnail);
         }
 
         private void HistoryThumb_Click(object sender, RoutedEventArgs e)
         {
             if ((sender as FrameworkElement)?.Tag is GenerationHistoryItem item)
-                OpenLightbox(LoadBitmapSource(item.FilePath), "历史结果", true);
+                OpenLightboxFromFile(item.FilePath, "历史结果", true, item.Thumbnail);
         }
 
         private void OpenLightbox(BitmapSource image, string title, bool downloadable)
@@ -198,17 +205,58 @@ namespace AIRenderer.Views
             if (image == null)
                 return;
 
-            _lightboxImage = image;
+            // 作废在途的后台解码：别让它把刚换上来的内存图又覆盖回去
+            _lightboxGeneration++;
+            ShowLightbox(image, title, downloadable, canDownload: true);
+        }
+
+        /// <summary>
+        /// 磁盘上的大图。先用缩略图占位（列表里已经解码并缓存过，零开销），
+        /// 整张解码放到线程池——4K PNG 全量解码约 33MB，同步做会卡住界面。
+        /// 解码刻意不限宽度：下载按钮存的就是这张解码结果，缩了解码下载出来的图就变小了。
+        /// </summary>
+        private void OpenLightboxFromFile(string path, string title, bool downloadable, BitmapSource placeholder)
+        {
+            // 缩略图都解不出来，多半是文件已经不在了——保持原来的行为：不打开
+            if (string.IsNullOrEmpty(path) || placeholder == null)
+                return;
+
+            var generation = ++_lightboxGeneration;
+            // 下载按钮在整张解码完成前不可用：否则抢在完成前点下载，存下来的是 320px 缩略图
+            ShowLightbox(placeholder, title, downloadable, canDownload: false);
+
+            Task.Run(() => LoadBitmapSource(path))
+                .ContinueWith(t =>
+                {
+                    var decoded = t.IsFaulted ? null : t.Result;
+                    if (decoded == null || generation != _lightboxGeneration)
+                        return;   // 文件没了，或期间灯箱已经关掉 / 换了别的图
+
+                    _lightboxImage = decoded;
+                    LightboxImage.Source = decoded;
+                    LightboxDownloadButton.IsEnabled =
+                        LightboxDownloadButton.Visibility == Visibility.Visible;
+                }, TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        private void ShowLightbox(BitmapSource image, string title, bool downloadable, bool canDownload)
+        {
+            // _lightboxImage 表示「下载按钮此刻能存到的那张图」。占位阶段保持 null，
+            // 下载按钮同时被禁用——这两条合起来才挡得住「存下来一张缩略图」。
+            _lightboxImage = canDownload ? image : null;
             _lightboxDownloadName = string.IsNullOrWhiteSpace(title) ? "tuojie-image" : title;
             LightboxImage.Source = image;
             LightboxTitle.Text = title ?? "";
             LightboxDownloadButton.Visibility = downloadable ? Visibility.Visible : Visibility.Collapsed;
+            LightboxDownloadButton.IsEnabled = canDownload;
             LightboxOverlay.Visibility = Visibility.Visible;
             _viewModel.CloseFloatPanels();
         }
 
         private void CloseLightbox()
         {
+            // 作废在途的后台解码：别让它把已经关掉的灯箱又点亮
+            _lightboxGeneration++;
             LightboxOverlay.Visibility = Visibility.Collapsed;
             LightboxImage.Source = null;
             _lightboxImage = null;

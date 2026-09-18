@@ -205,6 +205,20 @@ internal static class Program
         using (var masked = await svc.GenerateMaskedEditAsync(provider, "probe-key", "probe mask", src, mask, settings))
             Check("蒙版请求出图", masked != null, svc.LastError ?? "null");
 
+        Console.WriteLine("== 缩略图解码：DecodePixelWidth 必须生效 ==");
+        // 列表缩略图（历史 / 参考图）都走 LoadWpfThumbnail：不限制解码宽度的话，
+        // 一张 4K 图全量解码约 33MB，几张参考图就能把内存和界面拖垮。
+        var thumbPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "tuojie-thumb-probe.png");
+        using (var big = MakeImage(2000, 1200, false))
+            big.Save(thumbPath, ImageFormat.Png);
+        var thumb = ImageUtil.LoadWpfThumbnail(thumbPath, 320);
+        Check("2000px 原图解出的缩略图宽 <= 320",
+              thumb != null && thumb.PixelWidth > 0 && thumb.PixelWidth <= 320,
+              thumb == null ? "null" : thumb.PixelWidth + "x" + thumb.PixelHeight);
+        Check("文件不存在时返回 null 而不是抛异常",
+              ImageUtil.LoadWpfThumbnail(thumbPath + ".missing", 320) == null, "");
+        try { System.IO.File.Delete(thumbPath); } catch { }
+
         Console.WriteLine("\nprobe 结果：" + _pass + " 通过 / " + _fail + " 失败");
         return _fail == 0 ? 0 : 1;
     }

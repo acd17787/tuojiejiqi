@@ -1,3 +1,4 @@
+using AIRenderer.Services;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
@@ -425,31 +426,8 @@ namespace AIRenderer.Models
             get
             {
                 if (_thumbnail == null)
-                    _thumbnail = LoadThumbnail(FilePath);
+                    _thumbnail = ImageUtil.LoadWpfThumbnail(FilePath, 320);
                 return _thumbnail;
-            }
-        }
-
-        private static BitmapSource LoadThumbnail(string path)
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(path) || !File.Exists(path))
-                    return null;
-
-                var image = new BitmapImage();
-                image.BeginInit();
-                image.CacheOption = BitmapCacheOption.OnLoad;
-                image.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
-                image.DecodePixelWidth = 320;
-                image.UriSource = new Uri(path, UriKind.Absolute);
-                image.EndInit();
-                image.Freeze();
-                return image;
-            }
-            catch
-            {
-                return null;
             }
         }
     }
@@ -472,6 +450,23 @@ namespace AIRenderer.Models
         }
         public string Base64Data { get; set; } // Retained for migration only
         public string FilePath { get; set; }
+
+        private BitmapSource _thumbnail;
+        /// <summary>
+        /// 列表缩略图，首次绑定时从磁盘解码（限制解码宽度），之后缓存。不进 settings.json。
+        /// 原来界面直接绑 FilePath——WPF 会为每张缩略图把整张原图解码进内存，
+        /// 3 张参考图就是 3 次全量解码（每张可达几十 MB），加图那一下还会卡界面。
+        /// </summary>
+        [JsonIgnore]
+        public BitmapSource Thumbnail
+        {
+            get
+            {
+                if (_thumbnail == null)
+                    _thumbnail = ImageUtil.LoadWpfThumbnail(FilePath, 320);
+                return _thumbnail;
+            }
+        }
 
         public event PropertyChangedEventHandler PropertyChanged;
     }

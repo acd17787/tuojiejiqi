@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.IO;
+using System.Windows.Media.Imaging;
 
 namespace AIRenderer.Services
 {
@@ -68,6 +69,34 @@ namespace AIRenderer.Services
             using (var graphics = Graphics.FromImage(copy))
                 graphics.DrawImage(source, 0, 0, source.Width, source.Height);
             return copy;
+        }
+
+        /// <summary>
+        /// WPF 侧的缩略图解码。限制解码宽度——缩略图不值得把整张原图解进内存
+        /// （一张 4K 图全量解码约 33MB）。返回的图已 Freeze，可跨线程使用；
+        /// 文件不存在或解码失败返回 null。
+        /// </summary>
+        public static BitmapSource LoadWpfThumbnail(string path, int decodeWidth)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                    return null;
+
+                var image = new BitmapImage();
+                image.BeginInit();
+                image.CacheOption = BitmapCacheOption.OnLoad;
+                image.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+                image.DecodePixelWidth = decodeWidth;
+                image.UriSource = new Uri(path, UriKind.Absolute);
+                image.EndInit();
+                image.Freeze();
+                return image;
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 }

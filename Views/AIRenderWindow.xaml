@@ -1035,7 +1035,9 @@
                                                             Cursor="Hand" Click="ReferenceThumb_Click" Tag="{Binding}"
                                                             ToolTip="点击查看大图">
                                                         <Button.Background>
-                                                            <ImageBrush ImageSource="{Binding FilePath}" Stretch="UniformToFill"/>
+                                                            <!-- 绑 Thumbnail（320px 缓存）而不是 FilePath：
+                                                                 直接绑路径会让 WPF 把整张原图解码进内存 -->
+                                                            <ImageBrush ImageSource="{Binding Thumbnail}" Stretch="UniformToFill"/>
                                                         </Button.Background>
                                                         <Button.Template>
                                                             <ControlTemplate TargetType="Button">
