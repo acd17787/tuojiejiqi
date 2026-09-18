@@ -94,6 +94,14 @@
             </Setter>
         </Style>
 
+        <!-- ═══════════════ 图标几何 ═══════════════
+             成对重复的图标（历史卡片与历史抽屉各一份）统一成资源，
+             改一处即两处生效。 -->
+        <Geometry x:Key="IconDownload">M12 4v11M7.5 10.5 12 15l4.5-4.5M4.5 19.5h15</Geometry>
+        <Geometry x:Key="IconClose">M6 6l12 12M18 6 6 18</Geometry>
+        <Geometry x:Key="IconTrash">M4.5 7h15M9.5 7V5.2A1.2 1.2 0 0 1 10.7 4h2.6a1.2 1.2 0 0 1 1.2 1.2V7M6.5 7l.8 12.1A1.5 1.5 0 0 0 8.8 20.5h6.4a1.5 1.5 0 0 0 1.5-1.4L17.5 7</Geometry>
+        <Geometry x:Key="IconClock">M12 3.4a8.6 8.6 0 1 1 0 17.2 8.6 8.6 0 0 1 0-17.2ZM12 7.6V12l3 2</Geometry>
+
         <!-- ═══════════════ 悬浮滚动条 ═══════════════
              滚动条与内容叠在同一格里，不占宽度。
              必须这样：预览高度 = 卡片宽度 × 2/3，而卡片宽度取决于视口宽度，
@@ -315,28 +323,7 @@
             <Setter Property="Tag" Value="14"/>
         </Style>
 
-        <!-- ═══════════════ 模式按钮（快速出图 / 标准模式）═══════════════ -->
-        <Style x:Key="ModeButton" TargetType="Button">
-            <Setter Property="Height" Value="40"/>
-            <Setter Property="FontSize" Value="14"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Foreground" Value="#3A4354"/>
-            <Setter Property="Background" Value="#FFFFFF"/>
-            <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Tag" Value="12"/>
-            <Setter Property="Template" Value="{StaticResource FlatButtonTemplate}"/>
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding Path=(local:InteractiveHelper.IsActive), RelativeSource={RelativeSource Self}}" Value="True">
-                    <Setter Property="Foreground" Value="White"/>
-                    <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
-                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
-                    <Setter Property="FontWeight" Value="SemiBold"/>
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
-
-        <!-- ═══════════════ 比例 / 尺寸档位 chip ═══════════════ -->
+        <!-- ═══════════════ 分段 chip 模板（比例 / 尺寸 / 模式 / 工具 共用）═══════════════ -->
         <ControlTemplate x:Key="SegmentButtonTemplate" TargetType="Button">
             <Border x:Name="Bd"
                     Background="{TemplateBinding Background}"
@@ -354,7 +341,49 @@
             </ControlTemplate.Triggers>
         </ControlTemplate>
 
-        <Style x:Key="RatioChip" TargetType="Button">
+        <!-- ═══════════════ 档位 chip 基样式 ═══════════════
+             尺寸 / 比例 / 模式 / 工具 四组档位共用同一套「未选中 = 白底细描边、
+             选中 = 实心强调色」的语言，公共部分收在这里，各档位只覆盖差异项。
+             选中态触发器留在各自样式里——四组的绑定源不同（IsSelected / IsActive），
+             没法共用。
+             注意：StaticResource 是先定义后使用，这个样式必须排在所有 BasedOn 它的
+             样式之前，模板也要排在它之前。 -->
+        <Style x:Key="ChipBase" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Tag" Value="12"/>
+            <Setter Property="Foreground" Value="#3A4354"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
+            <Setter Property="Template" Value="{StaticResource SegmentButtonTemplate}"/>
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Foreground" Value="#C3CAD5"/>
+                    <Setter Property="Background" Value="#F4F6F9"/>
+                    <Setter Property="BorderBrush" Value="#E9EDF3"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- ═══════════════ 模式按钮（快速出图 / 标准模式）═══════════════ -->
+        <Style x:Key="ModeButton" TargetType="Button" BasedOn="{StaticResource ChipBase}">
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="FontSize" Value="14"/>
+            <!-- 模式按钮要 hover/pressed 反馈，用带那两条触发器的扁平模板覆盖基样式 -->
+            <Setter Property="Template" Value="{StaticResource FlatButtonTemplate}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Path=(local:InteractiveHelper.IsActive), RelativeSource={RelativeSource Self}}" Value="True">
+                    <Setter Property="Foreground" Value="White"/>
+                    <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- ═══════════════ 比例 / 尺寸档位 chip ═══════════════ -->
+
+        <Style x:Key="RatioChip" TargetType="Button" BasedOn="{StaticResource ChipBase}">
             <Setter Property="Height" Value="30"/>
             <!-- 比例档位已有 7 个（+「原图」共 8 个），收紧 4px 宽与 1px 间距，
                  否则窗口窄于约 1200 时最后一个档位会掉到第二行 -->
@@ -362,23 +391,9 @@
             <Setter Property="Padding" Value="8,0"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Margin" Value="0,0,5,0"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Tag" Value="12"/>
-            <Setter Property="Template" Value="{StaticResource SegmentButtonTemplate}"/>
             <Setter Property="ToolTip" Value="{Binding ToolTip}"/>
-            <!-- 和「图片尺寸」档位共用同一套语言：未选中白底细描边，选中实心强调色 + 白字 -->
-            <Setter Property="Foreground" Value="#3A4354"/>
-            <Setter Property="Background" Value="#FFFFFF"/>
-            <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
             <!-- 可用性由外层 ItemsControl 统一控制，这里不再重复绑定（两处绑同一来源容易只改一处） -->
             <Style.Triggers>
-                <!-- 快速出图：整组置灰、不高亮任何档位（配色与 SizeChip 的禁用态一致） -->
-                <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Foreground" Value="#C3CAD5"/>
-                    <Setter Property="Background" Value="#F4F6F9"/>
-                    <Setter Property="BorderBrush" Value="#E9EDF3"/>
-                </Trigger>
                 <DataTrigger Binding="{Binding IsSelected}" Value="True">
                     <Setter Property="Foreground" Value="White"/>
                     <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
@@ -388,26 +403,14 @@
             </Style.Triggers>
         </Style>
 
-        <Style x:Key="SizeChip" TargetType="Button">
+        <Style x:Key="SizeChip" TargetType="Button" BasedOn="{StaticResource ChipBase}">
             <Setter Property="Height" Value="34"/>
             <Setter Property="Padding" Value="0"/>
             <Setter Property="FontSize" Value="13.5"/>
             <Setter Property="Margin" Value="0,0,8,0"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Tag" Value="12"/>
-            <Setter Property="Template" Value="{StaticResource SegmentButtonTemplate}"/>
             <Setter Property="ToolTip" Value="{Binding ToolTip}"/>
-            <Setter Property="Foreground" Value="#3A4354"/>
-            <Setter Property="Background" Value="#FFFFFF"/>
-            <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
             <Setter Property="IsEnabled" Value="{Binding IsEnabled}"/>
             <Style.Triggers>
-                <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Foreground" Value="#C3CAD5"/>
-                    <Setter Property="Background" Value="#F4F6F9"/>
-                    <Setter Property="BorderBrush" Value="#E9EDF3"/>
-                </Trigger>
                 <DataTrigger Binding="{Binding IsSelected}" Value="True">
                     <Setter Property="Foreground" Value="White"/>
                     <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
@@ -418,14 +421,12 @@
         </Style>
 
         <!-- 蒙版工具段选择 -->
-        <Style x:Key="ToolChip" TargetType="Button">
+        <Style x:Key="ToolChip" TargetType="Button" BasedOn="{StaticResource ChipBase}">
             <Setter Property="Height" Value="28"/>
             <Setter Property="Padding" Value="11,0"/>
             <Setter Property="FontSize" Value="13"/>
-            <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Tag" Value="14"/>
-            <Setter Property="Template" Value="{StaticResource SegmentButtonTemplate}"/>
             <Setter Property="Foreground" Value="#4A5464"/>
             <Setter Property="Background" Value="Transparent"/>
             <Style.Triggers>
@@ -889,7 +890,7 @@
                                             IsEnabled="{Binding HasResultImage}" ToolTip="下载结果图">
                                         <StackPanel Orientation="Horizontal">
                                             <Path Width="15" Height="15" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.7"
-                                                  Data="M12 4v11M7.5 10.5 12 15l4.5-4.5M4.5 19.5h15"/>
+                                                  Data="{StaticResource IconDownload}"/>
                                             <TextBlock Text="下载" Margin="6,0,0,0" VerticalAlignment="Center"/>
                                         </StackPanel>
                                     </Button>
@@ -914,7 +915,7 @@
                                     <Button Style="{StaticResource CardIconButton}" Click="DeleteResult_Click"
                                             IsEnabled="{Binding HasResultImage}" ToolTip="删除结果">
                                         <Path Width="15" Height="15" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.7"
-                                              Data="M4.5 7h15M9.5 7V5.2A1.2 1.2 0 0 1 10.7 4h2.6a1.2 1.2 0 0 1 1.2 1.2V7M6.5 7l.8 12.1A1.5 1.5 0 0 0 8.8 20.5h6.4a1.5 1.5 0 0 0 1.5-1.4L17.5 7"/>
+                                              Data="{StaticResource IconTrash}"/>
                                     </Button>
                                 </StackPanel>
                             </Grid>
@@ -1050,7 +1051,7 @@
                                                             </ControlTemplate>
                                                         </Button.Template>
                                                         <Path Width="10" Height="10" Stretch="Uniform" Stroke="White"
-                                                              StrokeThickness="2.4" Data="M6 6l12 12M18 6 6 18"/>
+                                                              StrokeThickness="2.4" Data="{StaticResource IconClose}"/>
                                                     </Button>
                                                 </Grid>
                                             </DataTemplate>
@@ -1325,7 +1326,7 @@
                             ToolTip="历史记录">
                         <StackPanel>
                             <Path Width="22" Height="22" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.6"
-                                  Data="M12 3.4a8.6 8.6 0 1 1 0 17.2 8.6 8.6 0 0 1 0-17.2ZM12 7.6V12l3 2"
+                                  Data="{StaticResource IconClock}"
                                   HorizontalAlignment="Center"/>
                             <TextBlock Text="历史记录" FontSize="12" Foreground="#3A4354"
                                        HorizontalAlignment="Center" Margin="0,6,0,0"/>
@@ -1366,7 +1367,7 @@
                     <Grid Grid.Row="0" Margin="18,0,14,0">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Left">
                             <Path Width="17" Height="17" Stretch="Uniform" Stroke="#141A26" StrokeThickness="1.7"
-                                  Data="M12 3.4a8.6 8.6 0 1 1 0 17.2 8.6 8.6 0 0 1 0-17.2ZM12 7.6V12l3 2"/>
+                                  Data="{StaticResource IconClock}"/>
                             <TextBlock Text="历史记录" FontSize="14.5" FontWeight="SemiBold" Foreground="#141A26"
                                        Margin="9,0,0,0" VerticalAlignment="Center"/>
                             <Border Background="#EEF1F6" CornerRadius="10" MinWidth="24" Height="20"
@@ -1381,7 +1382,7 @@
                                 Style="{StaticResource CardIconButton}" Width="28" Height="28"
                                 Click="CloseHistoryPanel_Click" ToolTip="收起">
                             <Path Width="14" Height="14" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.9"
-                                  Data="M6 6l12 12M18 6 6 18"/>
+                                  Data="{StaticResource IconClose}"/>
                         </Button>
                     </Grid>
 
@@ -1449,14 +1450,14 @@
                                                             Command="{Binding DataContext.DownloadHistoryCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                             CommandParameter="{Binding}">
                                                         <Path Width="14" Height="14" Stretch="Uniform" Stroke="#4A5464" StrokeThickness="1.7"
-                                                              Data="M12 4v11M7.5 10.5 12 15l4.5-4.5M4.5 19.5h15"/>
+                                                              Data="{StaticResource IconDownload}"/>
                                                     </Button>
                                                     <Button Style="{StaticResource HistoryIconButton}" Margin="4,0,0,0"
                                                             ToolTip="删除记录"
                                                             Command="{Binding DataContext.DeleteHistoryCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                             CommandParameter="{Binding}">
                                                         <Path Width="14" Height="14" Stretch="Uniform" Stroke="#4A5464" StrokeThickness="1.7"
-                                                              Data="M4.5 7h15M9.5 7V5.2A1.2 1.2 0 0 1 10.7 4h2.6a1.2 1.2 0 0 1 1.2 1.2V7M6.5 7l.8 12.1A1.5 1.5 0 0 0 8.8 20.5h6.4a1.5 1.5 0 0 0 1.5-1.4L17.5 7"/>
+                                                              Data="{StaticResource IconTrash}"/>
                                                     </Button>
                                                 </StackPanel>
                                             </Grid>
