@@ -24,6 +24,20 @@ bin\Release\net7.0-windows\
 > `layout_contract_check.py` 用 `ContentRoot` / `SourcePreviewHitArea` 两个 `x:Name`
 > 当定位锚点，代码后置并不使用它们——清理「无用 x:Name」时别删这两个。
 
+### 侧车并发探针（改动 Sidecar 或 SidecarClient 后跑）
+
+侧车一次生图会占住连接好几分钟，串行处理会让第二个请求连不上、被误判成「卡死」
+然后 Kill。改完这部分代码跑一次这个探针：
+
+```powershell
+# 1) 按 verify-api.ps1 的方式部署探针（复制到插件输出目录 + 补 RhinoCommon）
+# 2) 在该目录下执行：
+$env:CONCURRENCY_PROBE=1; .\ApiProbe.exe
+```
+
+期望：`快请求 < 5 秒` 且两个请求都成功。若侧车退回串行单实例，快请求会等到
+10 秒连接超时并以 `Pipe is broken` 失败。
+
 ## 2. Rhino Main Flow
 
 - [ ] Close all Rhino processes before copying or rebuilding the release output.
