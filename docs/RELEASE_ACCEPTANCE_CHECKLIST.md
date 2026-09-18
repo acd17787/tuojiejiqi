@@ -46,6 +46,11 @@ $env:CONCURRENCY_PROBE=1; .\ApiProbe.exe
 - [ ] Run `AIRender` a second time while the window is open: no second window appears,
       the existing one comes to the front, and Rhino prints `AIRender window is already open.`
       （只允许单实例：两个窗口会互相覆盖对方的设置快照，还会并发占用同一个侧车管道。）
+- [ ] 参考图按会话清理：添加 1~3 张参考图 → 生成一次（状态条应显示「· 参考 N 张」）→
+      再生成一次（仍然带上，调提示词的迭代不被打断）→ 关闭窗口重新打开 →
+      参考图应为空，settings.json 里 `ReferenceImages` 也应为空。
+      卡片头部的「全部清除」应一键移除全部并删除 active-references 里的副本文件。
+      （上限 3 张在任何入口都不应被突破：本地上传、历史结果转参考图、启动回填。）
 - [ ] Open settings and configure APIYI:
   - Base URL: `https://api.apiyi.com`
   - Fast model: `gpt-image-2.5-all`

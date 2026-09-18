@@ -341,7 +341,9 @@ namespace AIRenderer.Services
                 list.Add(referenceImage);
             if (referenceImages != null)
                 list.AddRange(referenceImages.Where(r => r != null && !ReferenceEquals(r, referenceImage)));
-            return list.Take(15).ToList();
+            // 产品上限在 RenderSettings.MaxActiveReferences（VM 的添加/回填/发送各守一道），
+            // 这里是最后一道兜底。原来的 Take(15) 是批量渲染时代的遗留数字，早已不可达。
+            return list.Take(RenderSettings.MaxActiveReferences).ToList();
         }
 
         private static void DisposeAll(IEnumerable<Bitmap> bitmaps)

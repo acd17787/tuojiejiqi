@@ -1,4 +1,4 @@
-using AIRenderer.Models;
+﻿using AIRenderer.Models;
 using AIRenderer.Services;
 using Rhino;
 using System;
@@ -26,7 +26,6 @@ namespace AIRenderer.ViewModels
     public class AIRenderViewModel : INotifyPropertyChanged, IDisposable
     {
         /// <summary>参考图上限（图 2..图 4）</summary>
-        public const int MaxReferences = 3;
 
         /// <summary>提示词上限，与原型一致</summary>
         public const int MaxPromptLength = 2000;
@@ -68,11 +67,16 @@ namespace AIRenderer.ViewModels
             _settings = settings ?? new RenderSettings();
 
             Settings.PromptHistory = new ObservableCollection<PromptHistoryItem>(HistoryService.LoadPromptHistory());
-            // 参考图跨会话保留：回填上次的参考图（文件已复制到 %AppData%，路径长期有效）。
-            // 原来这里无条件清空，配合从未被调用的 SaveReferenceImages，等于加了参考图重启就没。
+            // 参考图会话内保留：正常关窗会在关闭时清空，这里恢复的是异常退出没来得及清的。
+            // 上限只在添加口守过一次：json 若因任何原因超过 3 条（手改 / 旧版本 / 将来上限
+            // 调小），这里不截断的话 UI 和生成都会原样带上，所以回填时再截一次。
+            var restoredReferences = SettingsService.LoadReferenceImages()
+                .Where(i => i != null && !string.IsNullOrEmpty(i.FilePath) && File.Exists(i.FilePath))
+                .ToList();
+            if (restoredReferences.Count > RenderSettings.MaxActiveReferences)
+                LogService.Warn($"settings.json 里有 {restoredReferences.Count} 张参考图，超出上限，只恢复前 {RenderSettings.MaxActiveReferences} 张");
             Settings.ActiveReferenceImages = new ObservableCollection<ReferenceImageItem>(
-                SettingsService.LoadReferenceImages()
-                    .Where(i => i != null && !string.IsNullOrEmpty(i.FilePath) && File.Exists(i.FilePath)));
+                restoredReferences.Take(RenderSettings.MaxActiveReferences));
 
             // 增删参考图后立即落盘，界面不用再记着调用
             Settings.ActiveReferenceImages.CollectionChanged += OnActiveReferenceImagesChanged;
@@ -116,6 +120,7 @@ namespace AIRenderer.ViewModels
             UploadImageCommand = new RelayCommand(UploadLocalImage, () => !IsGenerating);
             AddReferenceImagesCommand = new RelayCommand(AddReferenceImages, () => CanAddReference);
             RemoveActiveReferenceCommand = new RelayCommand<ReferenceImageItem>(RemoveActiveReference, item => !IsGenerating && item != null);
+            ClearReferencesCommand = new RelayCommand(ClearAllReferences, () => ActiveReferenceCount > 0 && !IsGenerating);
             GenerateCommand = new RelayCommand(Generate, () => CanGenerate);
             SaveResultCommand = new RelayCommand(SaveResult, () => HasResultImage);
             UseResultAsSourceCommand = new RelayCommand(UseResultAsSource, () => HasResultImage);
@@ -596,6 +601,7 @@ namespace AIRenderer.ViewModels
         public ICommand UploadImageCommand { get; }
         public ICommand AddReferenceImagesCommand { get; }
         public ICommand RemoveActiveReferenceCommand { get; }
+        public ICommand ClearReferencesCommand { get; }
         public ICommand GenerateCommand { get; }
         public ICommand SaveResultCommand { get; }
         public ICommand UseResultAsSourceCommand { get; }
@@ -626,7 +632,7 @@ namespace AIRenderer.ViewModels
 
         public int ActiveReferenceCount => Settings?.ActiveReferenceImages?.Count ?? 0;
         public bool HasActiveReferences => ActiveReferenceCount > 0;
-        public bool CanAddReference => !IsGenerating && ActiveReferenceCount < MaxReferences;
+        public bool CanAddReference => !IsGenerating && ActiveReferenceCount < RenderSettings.MaxActiveReferences;
 
         public Visibility ReferenceAddVisibility => CanAddReference ? Visibility.Visible : Visibility.Collapsed;
 
@@ -780,18 +786,20 @@ namespace AIRenderer.ViewModels
             Toast("已删除生成结果");
         }
 
-        /// <summary>清空原图、生成结果与蒙版（设置弹层里的「清除原图与生成结果」）</summary>
+        /// <summary>清空原图、生成结果、蒙版与参考图（设置弹层里的「清除原图与生成结果」）。
+        /// 参考图也在会话范围内——「清除会话」却留着它们，下一轮又会悄悄带上去。</summary>
         public void ResetSession()
         {
             SourceImage = null;
             ResultImage = null;
             ResetMaskState();
+            ClearAllReferences();
             Settings.SetSourceDimensions(0, 0);
             Settings.Prompt = "";
             OnPropertyChanged(nameof(PromptText));
             OnPropertyChanged(nameof(PromptCounterText));
             StatusMessage = "";
-            Toast("已清除原图与生成结果");
+            Toast("已清除原图、生成结果与参考图");
         }
 
         // ── 参考图 ────────────────────────────────────────────────────────
@@ -818,7 +826,7 @@ namespace AIRenderer.ViewModels
             var added = 0;
             foreach (var file in openDialog.FileNames)
             {
-                if (ActiveReferenceCount >= MaxReferences)
+                if (ActiveReferenceCount >= RenderSettings.MaxActiveReferences)
                     break;
                 if (AddActiveReferenceFromFile(file))
                     added++;
@@ -854,7 +862,7 @@ namespace AIRenderer.ViewModels
         /// <summary>参考图统一复制到 active-references 目录：删掉来源文件不会破坏当前请求</summary>
         private bool AddActiveReference(Bitmap bitmap, string name)
         {
-            if (bitmap == null || ActiveReferenceCount >= MaxReferences)
+            if (bitmap == null || ActiveReferenceCount >= RenderSettings.MaxActiveReferences)
                 return false;
 
             var copyPath = SaveActiveReferenceCopy(bitmap);
@@ -896,6 +904,25 @@ namespace AIRenderer.ViewModels
             TryDeleteActiveReferenceCopy(item.FilePath);
             NotifyActiveReferencesChanged();
             StatusMessage = "已删除参考图";
+        }
+
+        /// <summary>
+        /// 清空全部参考图：「全部清除」按钮与关窗时的会话清理共用。
+        /// 会话内保留（反复调提示词重新生成不受影响），关窗即清——下次打开是干净的；
+        /// 异常退出没来得及清的，下次启动按上面回填逻辑恢复。
+        /// 副本文件一并删除，CollectionChanged 会把空表落盘。
+        /// </summary>
+        public void ClearAllReferences()
+        {
+            if (Settings.ActiveReferenceImages == null || Settings.ActiveReferenceImages.Count == 0)
+                return;
+
+            foreach (var item in Settings.ActiveReferenceImages.ToList())
+                TryDeleteActiveReferenceCopy(item.FilePath);
+
+            Settings.ActiveReferenceImages.Clear();
+            NotifyActiveReferencesChanged();
+            StatusMessage = "已清除全部参考图";
         }
 
         private void NotifyActiveReferencesChanged()
@@ -945,7 +972,10 @@ namespace AIRenderer.ViewModels
         private List<Bitmap> LoadActiveReferenceBitmaps()
         {
             var bitmaps = new List<Bitmap>();
-            foreach (var item in Settings.ActiveReferenceImages ?? Enumerable.Empty<ReferenceImageItem>())
+            // 发送前再截一次上限：启动回填已经截过，这里兜住任何其它途径进来的超额
+            var items = (Settings.ActiveReferenceImages ?? Enumerable.Empty<ReferenceImageItem>())
+                .Take(RenderSettings.MaxActiveReferences);
+            foreach (var item in items)
             {
                 try
                 {
@@ -1449,14 +1479,18 @@ namespace AIRenderer.ViewModels
         private static Task<BitmapSource> ToBitmapSourceAsync(Bitmap bitmap)
             => Task.Run(() => ScreenCapture.BitmapToBitmapSource(bitmap));
 
-        /// <summary>生成中显示的摘要：模式 + 尺寸（不含模型名）</summary>
+        /// <summary>生成中显示的摘要：模式 + 尺寸 + 参考图数量（不含模型名）。
+        /// 带几张参考图参与生成必须看得见，否则上一轮留下的参考图被带上去也无人察觉。</summary>
         private string BuildGenerationDetail()
         {
+            // 快速出图同样发参考图（image 2..N），所以两个分支都要带上
+            var refs = ActiveReferenceCount > 0 ? $" · 参考 {ActiveReferenceCount} 张" : "";
+
             if (Settings.IsFastMode)
-                return "快速出图 · " + ImageSizeTable.FastSizeText;
+                return "快速出图 · " + ImageSizeTable.FastSizeText + refs;
 
             return "标准模式 · " + Settings.SelectedImageSize + " · " + Settings.ResolvedRatio + " · " +
-                   ImageSizeTable.PixelsText(Settings.ResolvedRatio, Settings.SelectedImageSize);
+                   ImageSizeTable.PixelsText(Settings.ResolvedRatio, Settings.SelectedImageSize) + refs;
         }
 
         private static string FormatElapsed(TimeSpan elapsed)

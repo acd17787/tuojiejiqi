@@ -72,6 +72,9 @@ namespace AIRenderer.Views
             };
             Closed += (s, e) =>
             {
+                // 参考图按会话清理：本轮工作里反复生成不受影响，下次打开是干净的。
+                // 放在最前面——CollectionChanged 会把空表落盘，异常退出时它作为残留恢复。
+                _viewModel.ClearAllReferences();
                 _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
                 _viewModel.SourceLayoutChanged -= OnSourceLayoutChanged;
                 _viewModel.MaskStrokesCleared -= OnMaskStrokesCleared;
@@ -167,7 +170,7 @@ namespace AIRenderer.Views
 
         private void ResetSession_Click(object sender, RoutedEventArgs e)
         {
-            var answer = MessageBox.Show("清除当前原图与生成结果？（历史记录不会被删除）", "清除",
+            var answer = MessageBox.Show("清除当前原图、生成结果与参考图？（历史记录不会被删除）", "清除",
                 MessageBoxButton.OKCancel, MessageBoxImage.Question);
             if (answer != MessageBoxResult.OK)
                 return;

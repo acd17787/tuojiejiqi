@@ -33,6 +33,12 @@ namespace AIRenderer.Models
         /// <summary>蒙版链路内部固定使用的模型（支持精确 inpainting），界面不展示、不可编辑</summary>
         public const string MaskModel = "gpt-image-2.5-sunburst";
 
+        /// <summary>
+        /// 参考图上限：产品决定（界面提示「最多 3 张」，作为图 2..图 4 参与生成）。
+        /// VM 的添加口、启动回填、生成发送与服务层的兜底共用这一个数字，改上限只动这里。
+        /// </summary>
+        public const int MaxActiveReferences = 3;
+
         public RenderSettings()
         {
             _selectedProviderItem = ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi));

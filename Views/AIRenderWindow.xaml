@@ -998,6 +998,10 @@
                                 <TextBlock Text="参考图像" Style="{StaticResource CardTitle}"/>
                                 <TextBlock Text="可选" FontSize="12" Foreground="{StaticResource Text3Brush}"
                                            Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                <Button Content="全部清除" Style="{StaticResource LinkButtonDanger}"
+                                        Command="{Binding ClearReferencesCommand}"
+                                        ToolTip="移除全部参考图（副本文件一并删除）"
+                                        Margin="10,0,0,0" VerticalAlignment="Center"/>
                             </StackPanel>
                             <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto"
                                           VerticalScrollBarVisibility="Disabled">
