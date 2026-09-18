@@ -1361,8 +1361,11 @@
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
+                                    <!-- VerticalAlignment=Top：卡片高度只由内容决定。
+                                         不加的话，面板给多高的格子它就撑多高，图片和按钮下面会拖出大片空白。 -->
                                     <Border Background="White" BorderBrush="{StaticResource LineBrush}"
-                                            BorderThickness="1" CornerRadius="12" Margin="5,0,5,10">
+                                            BorderThickness="1" CornerRadius="12" Margin="5,0,5,10"
+                                            VerticalAlignment="Top">
                                         <StackPanel>
                                             <Grid Height="100">
                                                 <!-- 用 ImageBrush 而不是 Image：Border 的圆角能裁到画刷本身，
