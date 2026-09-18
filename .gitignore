@@ -45,3 +45,4 @@ tools/win-verify/mock.out.txt
 tools/win-verify/mock.err.txt
 tools/win-verify/ApiProbe/bin/
 tools/win-verify/ApiProbe/obj/
+dist
