@@ -477,7 +477,9 @@
                     BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
                     CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"
                     SnapsToDevicePixels="True">
-                <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
+                <!-- 内边距不要写在这里：TextBoxBase 内部已经按 Padding 缩过文本层了，
+                     再套一层 Margin 等于扣两次，文字会被裁成半行。 -->
+                <ScrollViewer x:Name="PART_ContentHost"
                               VerticalScrollBarVisibility="{TemplateBinding VerticalScrollBarVisibility}"/>
             </Border>
         </ControlTemplate>
