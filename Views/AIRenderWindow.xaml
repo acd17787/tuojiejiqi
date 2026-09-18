@@ -94,6 +94,37 @@
             </Setter>
         </Style>
 
+        <!-- ═══════════════ 悬浮滚动条 ═══════════════
+             滚动条与内容叠在同一格里，不占宽度。
+             必须这样：预览高度 = 卡片宽度 × 2/3，而卡片宽度取决于视口宽度，
+             视口宽度又取决于「自动滚动条是否显示」——滚动条一旦占宽度就构成回路：
+             显示→变窄→预览变矮→内容变矮→又不需要滚动条→隐藏→变宽→变高→……
+             实测窗口高度 927~930 四档会出现「第一遍隐藏、第二遍显示」的自激。
+             悬浮后内容宽度恒定，回路消失。 -->
+        <Style x:Key="OverlayScrollViewer" TargetType="ScrollViewer">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollViewer">
+                        <Grid Background="{TemplateBinding Background}">
+                            <ScrollContentPresenter x:Name="PART_ScrollContentPresenter"
+                                                    Margin="{TemplateBinding Padding}"
+                                                    CanContentScroll="{TemplateBinding CanContentScroll}"
+                                                    Content="{TemplateBinding Content}"
+                                                    ContentTemplate="{TemplateBinding ContentTemplate}"/>
+                            <ScrollBar x:Name="PART_VerticalScrollBar" Orientation="Vertical"
+                                       HorizontalAlignment="Right" Width="10" Margin="0,0,0,0"
+                                       Minimum="0"
+                                       Maximum="{TemplateBinding ScrollableHeight}"
+                                       ViewportSize="{TemplateBinding ViewportHeight}"
+                                       Value="{Binding VerticalOffset, RelativeSource={RelativeSource TemplatedParent}, Mode=OneWay}"
+                                       Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"
+                                       Style="{StaticResource SlimScrollBar}"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- ═══════════════ 卡片 ═══════════════ -->
         <!-- 投影放在「阴影层」上，卡片本体不挂 Effect：
              Effect 会把整棵子树先栅格化，卡片里的中文小字会退化成灰度抗锯齿、发虚。
@@ -482,6 +513,7 @@
                 <!-- 内边距不要写在这里：TextBoxBase 内部已经按 Padding 缩过文本层了，
                      再套一层 Margin 等于扣两次，文字会被裁成半行。 -->
                 <ScrollViewer x:Name="PART_ContentHost"
+                              HorizontalScrollBarVisibility="{TemplateBinding HorizontalScrollBarVisibility}"
                               VerticalScrollBarVisibility="{TemplateBinding VerticalScrollBarVisibility}"/>
             </Border>
         </ControlTemplate>
@@ -558,6 +590,7 @@
 
             <!-- ─────────── 内容区（纵向滚动，禁止整体缩放）─────────── -->
             <ScrollViewer x:Name="ContentScroll" Grid.Column="0"
+                          Style="{StaticResource OverlayScrollViewer}"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
                           Background="Transparent">
@@ -588,6 +621,7 @@
                     <!-- ══════ 原始图像 ══════ -->
                     <Grid Grid.Row="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=source.row}"
                           Grid.Column="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=source.column}"
+                          Grid.ColumnSpan="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=source.span}"
                           Margin="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=source.margin}">
                         <!-- 阴影层：卡片本体不挂 Effect，否则卡片里的中文小字会发虚 -->
                         <Border Style="{StaticResource CardShadowLayer}"/>
@@ -822,6 +856,7 @@
                     <!-- ══════ 生成结果 ══════ -->
                     <Grid Grid.Row="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=result.row}"
                           Grid.Column="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=result.column}"
+                          Grid.ColumnSpan="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=result.span}"
                           Margin="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=result.margin}">
                         <!-- 阴影层：卡片本体不挂 Effect，否则卡片里的中文小字会发虚 -->
                         <Border Style="{StaticResource CardShadowLayer}"/>
@@ -1035,6 +1070,7 @@
                     <!-- ══════ 模型设置 ══════ -->
                     <Grid Grid.Row="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=settings.row}"
                           Grid.Column="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=settings.column}"
+                          Grid.ColumnSpan="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=settings.span}"
                           Margin="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=settings.margin}">
                         <!-- 阴影层：卡片本体不挂 Effect，否则卡片里的中文小字会发虚 -->
                         <Border Style="{StaticResource CardShadowLayer}"/>
@@ -1349,8 +1385,8 @@
                         </Button>
                     </Grid>
 
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
-                                  >
+                    <ScrollViewer Grid.Row="1" Style="{StaticResource OverlayScrollViewer}"
+                                  VerticalScrollBarVisibility="Auto">
                         <ItemsControl ItemsSource="{Binding GenerationHistory}" Margin="7,12,7,12">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>

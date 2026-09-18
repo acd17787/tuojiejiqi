@@ -306,6 +306,16 @@ namespace AIRenderer.Services
                 settings.AspectRatio = ImageSizeTable.RatioAuto;
         }
 
+        /// <summary>已彻底移除的线路留下的旧模型名：只有这些才回落默认值。</summary>
+        private static bool IsRetiredModelName(string name)
+        {
+            var n = (name ?? "").Trim();
+            return n.StartsWith("gemini", StringComparison.OrdinalIgnoreCase)
+                || n.StartsWith("vertex", StringComparison.OrdinalIgnoreCase)
+                || n.StartsWith("imagen", StringComparison.OrdinalIgnoreCase)
+                || n.StartsWith("gpt-image-1", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static string FirstLegacyKey(AppSettings settings)
         {
             var fromBuiltIn = settings.LegacyApiKeys?.Values?.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
@@ -317,8 +327,11 @@ namespace AIRenderer.Services
         /// <summary>旧 SelectedModel 里的 gpt-image-2.x 名字迁移到新版字段；Gemini 等一律丢弃</summary>
         private static string MigrateModelName(string current, string legacy, string fallback, string suffix)
         {
-            if (!string.IsNullOrWhiteSpace(current) && current.StartsWith("gpt-image-2.5", StringComparison.OrdinalIgnoreCase))
-                return current;
+            // 用户填的模型名一律原样保留。原来只放行 gpt-image-2.5*，
+            // 导致任何自定义名（含官方仍推荐的上一代 gpt-image-2-vip）每次读设置都被静默改回默认值，
+            // 用户在设置里改模型名等于白改。只丢弃确实已下线线路的旧名（Gemini/Vertex 等）。
+            if (!string.IsNullOrWhiteSpace(current) && !IsRetiredModelName(current))
+                return current.Trim();
 
             if (!string.IsNullOrWhiteSpace(legacy) &&
                 legacy.StartsWith("gpt-image-2", StringComparison.OrdinalIgnoreCase))

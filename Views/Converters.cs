@@ -135,7 +135,9 @@ namespace AIRenderer.Views
                 case "column":
                     return narrow || leftColumn ? 0 : 2;
                 case "span":
-                    return narrow ? 2 : 1;
+                    // 窄窗下三列都是 Star（见 AdaptiveColumnWidthConverter），
+                    // 卡片必须跨满 3 列才是整宽；原来给 2 只占 2/3，右侧留一大片空白。
+                    return narrow ? 3 : 1;
                 default:
                     // 上边距必须跟着 layoutRow 走：宽窗下 result 的 SlotRow 是 1，
                     // 若用 row 判断会给它 14px 上边距，右列整张卡片比左列低 14px，两栏顶部对不齐。
