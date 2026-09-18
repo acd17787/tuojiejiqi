@@ -18,7 +18,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def declared_properties(path: Path):
-    """粗略抽取 public 属性/字段名（足够做绑定名存在性校验）。"""
+    """粗略抽取 public 属性/字段名（足够做绑定名存在性校验）。文件不存在返回空集。"""
+    if not path.exists():
+        return set()
     text = path.read_text(encoding="utf-8")
     names = set(re.findall(r"public\s+(?:[\w<>?\[\],\.\s]+?)\s+(\w+)\s*(?:\{|=>|;)", text))
     names |= set(re.findall(r"public\s+const\s+\w+\s+(\w+)", text))
@@ -27,7 +29,6 @@ def declared_properties(path: Path):
 
 VM = declared_properties(ROOT / "ViewModels/AIRenderViewModel.cs")
 SETTINGS = declared_properties(ROOT / "Models/RenderSettings.cs")
-BATCH = declared_properties(ROOT / "ViewModels/BatchRenderViewModel.cs")
 ITEM_TYPES = {
     "AspectRatio": declared_properties(ROOT / "Models/RenderSettings.cs"),
     "SizeOption": declared_properties(ROOT / "Models/RenderSettings.cs"),
@@ -46,13 +47,16 @@ LIST_CONTEXT = {
     "Toasts": "string",
 }
 
+# 所有已知条目类型的属性并集：条目模板里的绑定只做「是不是条目属性」的存在性判断，
+# 不纠结它到底属于哪一个条目类型（位置区间法在多 ItemsControl 下不可靠，会误报）。
+ALL_ITEM_PROPS = set().union(*ITEM_TYPES.values())
+
 VIEPROPERTIES = {"IsActive", "ActualWidth", "ActualHeight"} | {
     n for n in re.findall(r"public\s+static\s+readonly\s+DependencyProperty\s+(\w+)", (ROOT / "Views/InteractiveHelper.cs").read_text(encoding="utf-8"))
 }
 
 ROOTS = {
     "Settings": SETTINGS,
-    "BatchVM": BATCH,
     "__vm__": VM,
     "__item__": None,  # 由模板上下文决定
 }
@@ -68,13 +72,15 @@ failures = []
 checked = 0
 
 # 找出 ItemsControl 的 ItemsSource -> 其 ItemTemplate 的上下文（按出现顺序配对）
-items_re = re.compile(
-    r"ItemsControl\s+ItemsSource=\"\{Binding\s+([^}\"]+)\}\"(.*?)</ItemsControl>", re.S
-)
+# 注意：ItemsSource 不一定是第一个属性（例如前面还有 Grid.Column），
+# 所以先匹配整个开标签再单独取 ItemsSource，顺序无关。
+items_re = re.compile(r'<ItemsControl((?:[^>"]|"[^"]*")*)>(.*?)</ItemsControl>', re.S)
 ranges = []
 for m in items_re.finditer(text):
-    source = m.group(1).strip()
-    ranges.append((m.start(2), m.end(2), LIST_CONTEXT.get(source)))
+    src = re.search(r'ItemsSource="\{Binding\s+([^}"]+)\}"', m.group(1))
+    if not src:
+        continue
+    ranges.append((m.start(2), m.end(2), LIST_CONTEXT.get(src.group(1).strip())))
 
 # 布尔标志：解析 DataTemplate 中出现的 Tag / Click 等无关绑定
 
@@ -112,7 +118,14 @@ for m in binding_re.finditer(text):
     if not path:
         continue
 
-    # 附加属性（local:InteractiveHelper.IsActive）——属性本身声明在 Views/InteractiveHelper.cs
+    # 模板内自引用：源是控件自身（Tag 传圆角、附加属性自检），不是 VM，跳过
+    if "RelativeSource" in body and ("TemplatedParent" in body or "Self" in body):
+        checked += 1
+        continue
+
+    # 附加属性（(local:InteractiveHelper.IsActive)）——属性本身声明在 Views/InteractiveHelper.cs
+    if path.startswith("(") and path.endswith(")"):
+        path = path[1:-1].strip()
     if ":" in path and "." in path and not path.startswith("DataContext."):
         path = path.split(".", 1)[1]
     if path in VIEPROPERTIES:
@@ -132,7 +145,7 @@ for m in binding_re.finditer(text):
         table = ITEM_TYPES[head]
         rest = path.split(".")[1:]
         root = head
-    elif head in ("Settings", "BatchVM"):
+    elif head == "Settings":
         table = ROOTS[head]
         rest = path.split(".")[1:]
         root = head
@@ -147,6 +160,9 @@ for m in binding_re.finditer(text):
 
     checked += 1
     if rest and rest[0] not in table:
+        # 条目模板内的绑定：属性存在于任一已知条目类型即视为有效
+        if rest[0] in ALL_ITEM_PROPS:
+            continue
         failures.append((pos, path, root))
 
 text_lines = text.splitlines()
