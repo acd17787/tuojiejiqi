@@ -288,6 +288,20 @@ namespace TuoJieSidecar
             }
         }
 
+        /// <summary>
+        /// 瞬时传输错误重试时切换到备用节点。这是**有意为之的故障转移**，不是遗留代码：
+        /// API易 文档（docs.apiyi.com/faq/base-url-config）列出四个节点并明确建议
+        /// 「在代码中配置备用节点，实现自动切换，提高服务可用性」。
+        ///
+        ///   api.apiyi.com     国内默认
+        ///   vip.apiyi.com     全球直连（文档标注为非大陆首选，可从大陆访问）
+        ///   b.apiyi.com       备用节点（「主力节点异常时可切换」）
+        ///   api-cf.apiyi.com  Cloudflare CDN（有 100 秒超时限制，不适合生图）
+        ///
+        /// 只在传输层失败（unexpected EOF / SSL 建连失败）时触发，见 IsTransientTransportError；
+        /// HTTP 状态码错误不重试。换节点不影响协议判定——IsApiYiHost 同时认这三个域名，
+        /// 换过去仍走 /v1/images/generations。
+        /// </summary>
         private static string GetRetryUrl(string url, int attempt)
         {
             if (attempt <= 0 || string.IsNullOrWhiteSpace(url))

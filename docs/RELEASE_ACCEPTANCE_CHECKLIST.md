@@ -43,6 +43,9 @@ $env:CONCURRENCY_PROBE=1; .\ApiProbe.exe
 - [ ] Close all Rhino processes before copying or rebuilding the release output.
 - [ ] Drag `bin\Release\net7.0-windows\TuoJie.rhp` into Rhino 8.
 - [ ] Run `AIRender`; confirm the main window opens.
+- [ ] Run `AIRender` a second time while the window is open: no second window appears,
+      the existing one comes to the front, and Rhino prints `AIRender window is already open.`
+      （只允许单实例：两个窗口会互相覆盖对方的设置快照，还会并发占用同一个侧车管道。）
 - [ ] Open settings and configure APIYI:
   - Base URL: `https://api.apiyi.com`
   - Fast model: `gpt-image-2.5-all`
