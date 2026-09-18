@@ -11,6 +11,34 @@ namespace AIRenderer.Services
     /// </summary>
     public static class ImageUtil
     {
+        /// <summary>
+        /// 把最长边限制到 maxEdge 以内（等比缩小）。**缩小时会 Dispose 传入的位图**（调用方交出所有权），
+        /// 已在范围内则原样返回。参考图不压缩的话，几张手机原图的 base64 就能让请求帧超过侧车的 50MB 上限，
+        /// 侧车会直接断管，客户端只能报「Sidecar unreachable」。
+        /// </summary>
+        public static Bitmap LimitMaxEdge(Bitmap bitmap, int maxEdge)
+        {
+            if (bitmap == null || maxEdge <= 0)
+                return bitmap;
+
+            var current = Math.Max(bitmap.Width, bitmap.Height);
+            if (current <= maxEdge)
+                return bitmap;
+
+            var scale = (double)maxEdge / current;
+            var w = Math.Max(16, (int)Math.Round(bitmap.Width * scale));
+            var h = Math.Max(16, (int)Math.Round(bitmap.Height * scale));
+
+            var resized = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var g = Graphics.FromImage(resized))
+            {
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.DrawImage(bitmap, 0, 0, w, h);
+            }
+            bitmap.Dispose();
+            return resized;
+        }
+
         public static Bitmap FromBytes(byte[] bytes)
         {
             if (bytes == null || bytes.Length == 0)

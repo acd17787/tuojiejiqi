@@ -357,7 +357,10 @@ namespace AIRenderer.Services
                 try
                 {
                     Directory.CreateDirectory(SettingsFolder);
-                    var tmp = SettingsFile + ".tmp";
+                    // 文件名带上进程号 + 随机串：进程内锁管不了两个 Rhino 实例，
+                    // 固定名会让 A 写完 tmp、B 覆写、A 先 Replace 把 B 的内容写进去，B 的保存丢失。
+                    var tmp = SettingsFile + "." + System.Diagnostics.Process.GetCurrentProcess().Id + "." +
+                              Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
                     File.WriteAllText(tmp, JsonConvert.SerializeObject(settings, Formatting.Indented));
                     if (File.Exists(SettingsFile))
                         File.Replace(tmp, SettingsFile, null);

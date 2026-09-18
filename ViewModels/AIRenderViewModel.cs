@@ -150,7 +150,14 @@ namespace AIRenderer.ViewModels
             SelectEraserCommand = new RelayCommand(() => IsMaskErasing = true);
 
             // 模式 / 比例 / 尺寸
-            SelectFastModeCommand = new RelayCommand(() => Settings.IsFastMode = true);
+            SelectFastModeCommand = new RelayCommand(() =>
+            {
+                // 快速出图不支持蒙版。不清掉的话，界面显示「快速出图」但请求仍走 /images/edits
+                // 且固定用 sunburst 模型，而「重新编辑」按钮还是灰的，用户只能靠「清除蒙版」退出。
+                if (!Settings.IsFastMode)
+                    ResetMaskState();
+                Settings.IsFastMode = true;
+            });
             SelectStandardModeCommand = new RelayCommand(() => Settings.IsFastMode = false);
             SelectRatioCommand = new RelayCommand<string>(SelectRatio);
             SelectSizeCommand = new RelayCommand<string>(SelectSize);
@@ -960,7 +967,8 @@ namespace AIRenderer.ViewModels
                 {
                     if (string.IsNullOrEmpty(item.FilePath) || !File.Exists(item.FilePath))
                         continue;
-                    var bitmap = ImageUtil.FromBytes(File.ReadAllBytes(item.FilePath));
+                    // 与源图同样限制最长边：参考图不压缩的话请求帧可能超过侧车 50MB 上限
+                    var bitmap = ImageUtil.LimitMaxEdge(ImageUtil.FromBytes(File.ReadAllBytes(item.FilePath)), 1536);
                     if (bitmap != null)
                         bitmaps.Add(bitmap);
                 }
@@ -1211,19 +1219,23 @@ namespace AIRenderer.ViewModels
                 StatusMessage = "正在生成…";
                 var totalWatch = Stopwatch.StartNew();
 
-                using (var sourceBitmap = ScreenCapture.BitmapSourceToBitmap(SourceImage))
+                // 源图转换 + 参考图读取 + 服务层的请求体编码（PNG + base64，可达数 MB）都是纯 CPU/IO。
+                // 不挪走的话每次点生成都会先冻住界面 0.5~2 秒（4K 更久）。
+                using (var sourceBitmap = await Task.Run(() => ScreenCapture.BitmapSourceToBitmap(SourceImage)))
                 {
-                    var references = LoadActiveReferenceBitmaps();
+                    var references = await Task.Run(() => LoadActiveReferenceBitmaps());
                     try
                     {
-                        using (var resultBitmap = await _apiService.GenerateImageAsync(
+                        // 整个服务调用也放线程池：它内部的首段（PrepareSourceImage / ToDataUrl）
+                        // 在首个 await 之前同步执行，留在 UI 线程上一样会冻界面。
+                        using (var resultBitmap = await Task.Run(() => _apiService.GenerateImageAsync(
                             provider,
                             Settings.ApiKey,
                             prompt,
                             sourceBitmap,
                             Settings,
                             null,
-                            references))
+                            references)))
                         {
                             // 面包屑：能打到这里说明响应已经从侧车完整取回，问题不在传输层
                             LogService.Info($"API 返回 | {(resultBitmap == null ? "null" : resultBitmap.Width + "x" + resultBitmap.Height)}");
@@ -1283,15 +1295,15 @@ namespace AIRenderer.ViewModels
                     StatusMessage = "正在发送蒙版修改请求…";
                     var totalWatch = Stopwatch.StartNew();
 
-                    using (var sourceBitmap = ScreenCapture.BitmapSourceToBitmap(SourceImage))
+                    using (var sourceBitmap = await Task.Run(() => ScreenCapture.BitmapSourceToBitmap(SourceImage)))
                     {
-                        using (var resultBitmap = await _apiService.GenerateMaskedEditAsync(
+                        using (var resultBitmap = await Task.Run(() => _apiService.GenerateMaskedEditAsync(
                             provider,
                             Settings.ApiKey,
                             prompt,
                             sourceBitmap,
                             maskBitmap,
-                            Settings))
+                            Settings)))
                         {
                             // 面包屑：能打到这里说明响应已经从侧车完整取回，问题不在传输层
                             LogService.Info($"API 返回 | {(resultBitmap == null ? "null" : resultBitmap.Width + "x" + resultBitmap.Height)}");
@@ -1595,7 +1607,8 @@ namespace AIRenderer.ViewModels
             if (changed)
             {
                 SettingsService.SaveRenderSettings(Settings);
-                Settings.SelectedProviderItem = ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi));
+                // 不再重置 SelectedProviderItem：它是 LoadRenderSettings 按 BaseUrl 推导出来的，
+                // 硬编码回 API易 会把自定义中转站的协议字段（images/edits 的字段名）改错。
             }
 
             OnPropertyChanged(nameof(PendingFastModel));

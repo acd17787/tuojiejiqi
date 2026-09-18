@@ -503,10 +503,28 @@ namespace AIRenderer.Services
                 var path = Path.Combine(folder, $"mask_{stamp}.png");
                 maskImage.Save(path, ImageFormat.Png);
                 LogService.Info($"Mask debug image saved: {path}");
+                TrimMaskDebugFolder(folder, keep: 10);
             }
             catch (Exception ex)
             {
                 LogService.Warn($"Failed to save mask debug image: {ex.Message}");
+            }
+        }
+
+        /// <summary>只保留最近 keep 张调试图：每次蒙版生成都会写一张全尺寸 PNG，不清理会无限增长。</summary>
+        private static void TrimMaskDebugFolder(string folder, int keep)
+        {
+            try
+            {
+                var files = new DirectoryInfo(folder).GetFiles("mask_*.png")
+                    .OrderByDescending(f => f.LastWriteTimeUtc)
+                    .Skip(keep);
+                foreach (var f in files)
+                    f.Delete();
+            }
+            catch (Exception ex)
+            {
+                LogService.Warn($"清理蒙版调试图失败：{ex.Message}");
             }
         }
 
