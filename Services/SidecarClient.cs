@@ -213,6 +213,7 @@ namespace AIRenderer.Services
             var json = JsonConvert.SerializeObject(request);
             var bytes = Encoding.UTF8.GetBytes(json);
             var lengthPrefix = BitConverter.GetBytes(bytes.Length);
+            string lastError = null;
 
             for (int attempt = 0; attempt < 2; attempt++)
             {
@@ -249,16 +250,37 @@ namespace AIRenderer.Services
                 }
                 catch (OperationCanceledException)
                 {
-                    return new SidecarResponse { Id = request.Id, StatusCode = 0, Error = "Request cancelled" };
+                    // 调用方主动取消（关窗口等）：不要重启侧车
+                    if (ct.IsCancellationRequested)
+                        return new SidecarResponse { Id = request.Id, StatusCode = 0, Error = "Request cancelled" };
+
+                    // 内部超时（10 秒没连上）：说明侧车卡住了。按失败处理并重启，
+                    // 否则那个卡死的侧车一直占着唯一实例，后续请求全部连不上。
+                    lastError = "连接侧车超时";
+                    if (attempt == 0)
+                        RestartSidecar();
                 }
-                catch (Exception) when (attempt == 0)
+                catch (Exception ex) when (attempt == 0)
                 {
-                    // Restart sidecar and retry once
+                    // 第一次失败：重启侧车并重试一次
+                    lastError = $"{ex.GetType().Name}: {ex.Message}";
                     RestartSidecar();
+                }
+                catch (Exception ex)
+                {
+                    lastError = $"{ex.GetType().Name}: {ex.Message}";
                 }
             }
 
-            return new SidecarResponse { Id = request.Id, StatusCode = 0, Error = "Sidecar unreachable after retry" };
+            // 带上最后一次的真实异常：原来只报「unreachable」，真正的失败原因被丢掉了
+            return new SidecarResponse
+            {
+                Id = request.Id,
+                StatusCode = 0,
+                Error = string.IsNullOrEmpty(lastError)
+                    ? "Sidecar unreachable after retry"
+                    : "Sidecar unreachable after retry: " + lastError
+            };
         }
 
         private void RestartSidecar()

@@ -155,9 +155,15 @@ namespace TuoJieSidecar
                 var responseBytes = Encoding.UTF8.GetBytes(responseJson);
                 var lengthPrefix = BitConverter.GetBytes(responseBytes.Length);
 
-                await pipe.WriteAsync(lengthPrefix, 0, 4);
-                await pipe.WriteAsync(responseBytes, 0, responseBytes.Length);
-                await pipe.FlushAsync();
+                // 写入必须带超时：客户端中途放弃读取（例如它自己超时了）时，
+                // 这里会永久阻塞在 WriteAsync 上，while(true) 就再也 accept 不了新连接，
+                // 之后每次请求都在客户端 10 秒连接超时后失败——表现为「一直转」。
+                using (var writeCts = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
+                {
+                    await pipe.WriteAsync(lengthPrefix, 0, 4, writeCts.Token);
+                    await pipe.WriteAsync(responseBytes, 0, responseBytes.Length, writeCts.Token);
+                    await pipe.FlushAsync(writeCts.Token);
+                }
             }
         }
 
@@ -166,7 +172,9 @@ namespace TuoJieSidecar
             var requestInfo = BuildRequestInfo(request, attempt);
             try
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(30));
+                // 与客户端的 HttpClient 超时（10 分钟）对齐：谁先放弃都要一致，
+                // 否则客户端先超时、侧车还在跑，就成了上面那条「写入阻塞」的触发条件。
+                using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
                 var requestUrl = GetRetryUrl(request.Url, attempt);
                 var httpRequest = new HttpRequestMessage(
                     new HttpMethod(request.Method),

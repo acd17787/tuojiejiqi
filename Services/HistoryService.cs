@@ -61,18 +61,33 @@ namespace AIRenderer.Services
             if (bitmap == null)
                 return null;
 
+            // 编码与落盘放在锁外：4K PNG 编码约 0.6 秒，占着锁会让 UI 线程
+            // （删除提示词/历史、读历史列表）一直等锁，界面冻结。文件名用 GUID 保证唯一，锁外写不冲突。
+            var id = Guid.NewGuid().ToString("N");
+            string filePath;
+            try
+            {
+                Directory.CreateDirectory(HistoryFolder);
+                filePath = Path.Combine(HistoryFolder, $"{DateTime.Now:yyyyMMdd_HHmmss}_{id.Substring(0, 6)}.png");
+                bitmap.Save(filePath, ImageFormat.Png);
+            }
+            catch (Exception ex)
+            {
+                LogService.Error("Failed to write history image", ex);
+                return null;
+            }
+
             lock (_lock)
             {
                 try
                 {
-                    Directory.CreateDirectory(HistoryFolder);
-                    var id = Guid.NewGuid().ToString("N");
-                    var filePath = Path.Combine(HistoryFolder, $"{DateTime.Now:yyyyMMdd_HHmmss}_{id.Substring(0, 6)}.png");
-                    bitmap.Save(filePath, ImageFormat.Png);
-
                     var items = LoadGenerationHistoryUnlocked();
                     if (items == null)
-                        return null;   // 索引读失败：不写回，宁可这次不记
+                    {
+                        // 索引读失败：不写回，并清掉刚落的图，别留孤儿文件
+                        TryDeleteHistoryImage(filePath);
+                        return null;
+                    }
 
                     items.Insert(0, new GenerationHistoryItem
                     {
