@@ -66,6 +66,7 @@ namespace AIRenderer.ViewModels
         public bool HasBatchItems => _items.Count > 0;
         public string ProviderDisplayName => _settings.SelectedProviderItem?.DisplayName ?? "—";
 
+        /// <summary>批量参考图 API：主界面已无批量入口，保留供批量窗口/外部调用（不要删）</summary>
         public System.Windows.Media.Imaging.BitmapSource ReferenceImage
         {
             get => _referenceImage;
@@ -166,7 +167,7 @@ namespace AIRenderer.ViewModels
             if (item == null || item.IsGenerating || !item.HasSourceImage) return;
 
             var provider = _settings.SelectedProviderItem
-                ?? ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.BltAI));
+                ?? ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi));
             string apiKey = SettingsService.GetApiKey(provider.Id);
 
             // 其他所有已完成项的结果作一致性参考
@@ -237,7 +238,7 @@ namespace AIRenderer.ViewModels
             if (selected.Count == 0) return;
 
             var provider = _settings.SelectedProviderItem
-                ?? ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.BltAI));
+                ?? ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi));
             string apiKey = SettingsService.GetApiKey(provider.Id);
 
             IsRunning = true;

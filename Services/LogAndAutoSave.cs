@@ -44,42 +44,4 @@ namespace AIRenderer.Services
 
         public static string GetLogFolder() => LogFolder;
     }
-
-    /// <summary>
-    /// 自动保存服务：每次生成的图片自动保存到本地文件夹
-    /// </summary>
-    public static class AutoSaveService
-    {
-        private static readonly string SaveFolder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "AIRenderer", "generated");
-
-        public static string SaveImage(System.Drawing.Bitmap bitmap, string prompt)
-        {
-            try
-            {
-                if (!Directory.Exists(SaveFolder))
-                    Directory.CreateDirectory(SaveFolder);
-
-                // 文件名：时间戳 + 提示词前20字
-                var promptRaw = string.IsNullOrWhiteSpace(prompt) ? "render" :
-                    prompt.Substring(0, Math.Min(20, prompt.Length));
-                var invalidChars = Path.GetInvalidFileNameChars();
-                var promptPart = string.Join("_", promptRaw.Split(invalidChars));
-                var fileName = $"{DateTime.Now:yyyyMMdd_HHmmss}_{promptPart}.png";
-                var filePath = Path.Combine(SaveFolder, fileName);
-
-                bitmap.Save(filePath, System.Drawing.Imaging.ImageFormat.Png);
-                LogService.Info($"Auto-saved image: {filePath} ({bitmap.Width}x{bitmap.Height})");
-                return filePath;
-            }
-            catch (Exception ex)
-            {
-                LogService.Error("Auto-save failed", ex);
-                return null;
-            }
-        }
-
-        public static string GetSaveFolder() => SaveFolder;
-    }
 }

@@ -3,744 +3,1572 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:AIRenderer.Views"
         xmlns:svc="clr-namespace:AIRenderer.Services"
-        Title="TuoJie AI Renderer" Height="700" Width="1100"
+        Title="TuoJie AI Renderer"
+        Width="1280" Height="930" MinWidth="720" MinHeight="560"
         WindowStartupLocation="CenterScreen"
-        Background="#F5F5F5"
-        KeyDown="Window_KeyDown">
+        Background="#F5F7FB"
+        FontFamily="Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Segoe UI"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True"
+        SizeChanged="Window_SizeChanged"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        MouseLeftButtonDown="Window_MouseLeftButtonDown">
     <Window.Resources>
         <local:BoolToVisibilityConverter x:Key="BoolToVis"/>
         <local:InverseBoolToVisibilityConverter x:Key="InvBoolToVis"/>
+        <local:PreviewHeightConverter x:Key="PreviewHeight"/>
+        <local:ExpandChevronConverter x:Key="ExpandChevron"/>
+        <local:AdaptiveContentMarginConverter x:Key="AdaptiveContentMargin"/>
+        <local:AdaptiveColumnWidthConverter x:Key="AdaptiveColumnWidth"/>
+        <local:CardLayoutConverter x:Key="CardLayout"/>
         <svc:LocalizationManager x:Key="L"/>
 
-        <Style x:Key="SectionHeader" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="11"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="#888"/>
-            <Setter Property="Margin" Value="0,12,0,6"/>
-        </Style>
-        <Style x:Key="Label" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Margin" Value="0,5,0,2"/>
-            <Setter Property="Foreground" Value="#555"/>
+        <!-- ═══════════════ 调色板（对齐 prototype 的 CSS 变量）═══════════════ -->
+        <SolidColorBrush x:Key="WindowBg" Color="#F5F7FB"/>
+        <SolidColorBrush x:Key="CardBg" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="LineBrush" Color="#E6EAF2"/>
+        <SolidColorBrush x:Key="Line2Brush" Color="#DDE3EC"/>
+        <SolidColorBrush x:Key="Line3Brush" Color="#CFD7E4"/>
+        <SolidColorBrush x:Key="TextBrush" Color="#1E2430"/>
+        <SolidColorBrush x:Key="Text2Brush" Color="#5B6472"/>
+        <SolidColorBrush x:Key="Text3Brush" Color="#98A1AF"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#1668F6"/>
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="#EAF1FF"/>
+        <SolidColorBrush x:Key="DangerBrush" Color="#E5484D"/>
+        <SolidColorBrush x:Key="PreviewBgBrush" Color="#FAFBFE"/>
+        <SolidColorBrush x:Key="EmptyDashBrush" Color="#D5E0F0"/>
+        <!-- 次要色相：只用于「生成结果」这类 AI 产出，和输入类卡片区分 -->
+        <SolidColorBrush x:Key="VioletBrush" Color="#7C5CFC"/>
+        <SolidColorBrush x:Key="VioletSoftBrush" Color="#F1EEFF"/>
+        <SolidColorBrush x:Key="VioletLineBrush" Color="#E0D9FB"/>
+        <!-- 卡片描边比 LineBrush 更淡，让投影承担边界 -->
+        <SolidColorBrush x:Key="CardLineBrush" Color="#E8EDF6"/>
+
+        <!-- 窗口底色：极浅纵向渐变，白卡片才浮得起来 -->
+        <LinearGradientBrush x:Key="WindowGradient" StartPoint="0,0" EndPoint="0.35,1">
+            <GradientStop Color="#F8FAFD" Offset="0"/>
+            <GradientStop Color="#EAEFF8" Offset="1"/>
+        </LinearGradientBrush>
+
+        <!-- 预览区画布：14px 细网格（和圆角刻度同一个数字，视觉上是一套） -->
+        <DrawingBrush x:Key="CanvasGridBrush" TileMode="Tile" Viewport="0,0,14,14" ViewportUnits="Absolute">
+            <DrawingBrush.Drawing>
+                <GeometryDrawing Geometry="M0,0 L14,0 M0,0 L0,14">
+                    <GeometryDrawing.Pen>
+                        <Pen Brush="#EDF1F8" Thickness="1"/>
+                    </GeometryDrawing.Pen>
+                </GeometryDrawing>
+            </DrawingBrush.Drawing>
+        </DrawingBrush>
+
+        <!-- ═══════════════ 圆角刻度 ═══════════════
+             容器 16 / 大块面 14 / 控件 12 / ≤28px 的小标签用胶囊（高度一半）。
+             按钮一律走 Tag 传圆角，模板里不再写死，避免又散成一套取值。 -->
+
+        <!-- ═══════════════ 滚动条：细窄圆角 ═══════════════ -->
+        <Style x:Key="SlimScrollBar" TargetType="ScrollBar">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Width" Value="10"/>
+            <Setter Property="MinWidth" Value="10"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <Track.Thumb>
+                                <Thumb>
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Border x:Name="Bd" Background="#D3DAE6" CornerRadius="4" Margin="3,0"/>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="Bd" Property="Background" Value="#B9C4D6"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" Focusable="False"/>
+                            </Track.IncreaseRepeatButton>
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" Focusable="False"/>
+                            </Track.DecreaseRepeatButton>
+                        </Track>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
-        <!-- Primary button template -->
-        <ControlTemplate x:Key="BtnTpl" TargetType="Button">
-            <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <!-- ═══════════════ 卡片 ═══════════════ -->
+        <!-- 投影放在「阴影层」上，卡片本体不挂 Effect：
+             Effect 会把整棵子树先栅格化，卡片里的中文小字会退化成灰度抗锯齿、发虚。
+             用法：外面套一层 Grid 承担 Grid.Row/Column/Margin，里面先放阴影层再放卡片。 -->
+        <Style x:Key="CardShadowLayer" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBg}"/>
+            <Setter Property="CornerRadius" Value="16"/>
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect BlurRadius="26" ShadowDepth="4" Direction="270"
+                                      Color="#16233A" Opacity="0.10"/>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBg}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource CardLineBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="16"/>
+            <Setter Property="Padding" Value="17,15,19,17"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+        </Style>
+
+        <Style x:Key="CardTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="15.5"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#141A26"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="Foreground" Value="#6B7482"/>
+            <Setter Property="Margin" Value="0,0,0,7"/>
+        </Style>
+
+        <Style x:Key="FieldNote" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="Foreground" Value="#A8B0BD"/>
+            <Setter Property="Margin" Value="0,6,0,0"/>
+            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+        </Style>
+
+        <Style x:Key="ModeDescription" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="{StaticResource Text3Brush}"/>
+            <Setter Property="LineHeight" Value="17"/>
+            <Setter Property="Margin" Value="0,6,0,0"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+
+        <!-- ═══════════════ 按钮模板 ═══════════════ -->
+        <ControlTemplate x:Key="FlatButtonTemplate" TargetType="Button">
+            <Border x:Name="Bd"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"
+                    SnapsToDevicePixels="True">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Margin="{TemplateBinding Padding}"/>
             </Border>
             <ControlTemplate.Triggers>
-                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="0.88"/></Trigger>
-                <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="Bd" Property="Opacity" Value="0.88"/>
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter TargetName="Bd" Property="Opacity" Value="0.76"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+                </Trigger>
             </ControlTemplate.Triggers>
         </ControlTemplate>
 
-        <Style x:Key="BtnPrimary" TargetType="Button">
-            <Setter Property="Background" Value="#4A90D9"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="Padding" Value="16,9"/>
-            <Setter Property="FontSize" Value="13"/>
-            <Setter Property="BorderThickness" Value="0"/>
+        <ControlTemplate x:Key="IconButtonTemplate" TargetType="Button">
+            <Border x:Name="Bd"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"
+                    SnapsToDevicePixels="True">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="Bd" Property="Background" Value="#F5F8FD"/>
+                    <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Line3Brush}"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <!-- 实心主按钮模板：刻意不带「禁用就降透明度」那条，禁用配色由 Style 显式给，
+             这样「不可用」是平涂灰而不是淡掉的品牌色。 -->
+        <ControlTemplate x:Key="SolidButtonTemplate" TargetType="Button">
+            <Border x:Name="Bd"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"
+                    SnapsToDevicePixels="True">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Margin="{TemplateBinding Padding}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="Bd" Property="Opacity" Value="0.92"/>
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter TargetName="Bd" Property="Opacity" Value="0.84"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <!-- 卡片头部按钮（次按钮）：34px 高，窄窗口（≤1420）收紧到 32px -->
+        <Style x:Key="CardButton" TargetType="Button">
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="FontSize" Value="13.5"/>
+            <Setter Property="Foreground" Value="#2B3444"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Template" Value="{StaticResource BtnTpl}"/>
-        </Style>
-        <Style x:Key="BtnSecondary" TargetType="Button">
-            <Setter Property="Background" Value="#E0E0E0"/>
-            <Setter Property="Foreground" Value="#333"/>
-            <Setter Property="Padding" Value="12,7"/>
-            <Setter Property="FontSize" Value="12"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Template" Value="{StaticResource BtnTpl}"/>
-        </Style>
-        <Style x:Key="BtnGreen" TargetType="Button">
-            <Setter Property="Background" Value="#43A047"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="Padding" Value="16,9"/>
-            <Setter Property="FontSize" Value="13"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Template" Value="{StaticResource BtnTpl}"/>
-        </Style>
-        <Style x:Key="BtnPurple" TargetType="Button">
-            <Setter Property="Background" Value="#7B5EA7"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="Padding" Value="16,9"/>
-            <Setter Property="FontSize" Value="13"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Template" Value="{StaticResource BtnTpl}"/>
-        </Style>
-        <Style x:Key="BtnLight" TargetType="Button">
-            <Setter Property="Background" Value="#6BA5E7"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="Padding" Value="16,9"/>
-            <Setter Property="FontSize" Value="13"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Template" Value="{StaticResource BtnTpl}"/>
+            <Setter Property="Tag" Value="12"/>
+            <Setter Property="Template" Value="{StaticResource FlatButtonTemplate}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsCompactHeader}" Value="True">
+                    <Setter Property="Height" Value="32"/>
+                    <Setter Property="Padding" Value="10,0"/>
+                    <Setter Property="FontSize" Value="13"/>
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
 
-        <!-- Small icon button for per-item actions in batch list -->
-        <Style x:Key="BtnSmall" TargetType="Button">
-            <Setter Property="Padding" Value="8,4"/>
-            <Setter Property="FontSize" Value="11"/>
-            <Setter Property="BorderThickness" Value="0"/>
+        <!-- 幽灵按钮：无描边，给「涂抹修改」这类开关型次要动作 -->
+        <Style x:Key="GhostButton" TargetType="Button" BasedOn="{StaticResource CardButton}">
+            <Setter Property="Background" Value="#F5F7FC"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource Text2Brush}"/>
+        </Style>
+
+        <Style x:Key="CardIconButton" TargetType="Button" BasedOn="{StaticResource CardButton}">
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Foreground" Value="#3A4354"/>
+            <Setter Property="Template" Value="{StaticResource IconButtonTemplate}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsCompactHeader}" Value="True">
+                    <Setter Property="Width" Value="32"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- 主按钮：实心强调色。禁用态用平涂灰 + 灰字，而不是把强调色整体打 45%
+             透明度——后者看着像「褪色的蓝按钮」，不像「不可用」。 -->
+        <Style x:Key="PrimaryButton" TargetType="Button">
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="Padding" Value="16,0"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Template" Value="{StaticResource BtnTpl}"/>
+            <Setter Property="Tag" Value="12"/>
+            <Setter Property="Template" Value="{StaticResource SolidButtonTemplate}"/>
+            <Style.Triggers>
+                <!-- 禁用态用淡强调色而不是灰块：主行动要一直看得见，只是暂时不可用 -->
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Foreground" Value="#7E9AD6"/>
+                    <Setter Property="BorderBrush" Value="#C4D8FA"/>
+                    <Setter Property="Background" Value="#DCE8FB"/>
+                    <Setter Property="Cursor" Value="Arrow"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SmallButton" TargetType="Button">
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="Foreground" Value="#2B3444"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Tag" Value="14"/>
+            <Setter Property="Template" Value="{StaticResource FlatButtonTemplate}"/>
+        </Style>
+
+        <!-- 生成按钮：大块面圆角 14；高度由提示词框撑满（Height=Auto + Stretch） -->
+        <Style x:Key="GenerateButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+            <Setter Property="Width" Value="186"/>
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="Tag" Value="14"/>
+        </Style>
+
+        <!-- ═══════════════ 模式按钮（快速出图 / 标准模式）═══════════════ -->
+        <Style x:Key="ModeButton" TargetType="Button">
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#3A4354"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Tag" Value="12"/>
+            <Setter Property="Template" Value="{StaticResource FlatButtonTemplate}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Path=(local:InteractiveHelper.IsActive), RelativeSource={RelativeSource Self}}" Value="True">
+                    <Setter Property="Foreground" Value="White"/>
+                    <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- ═══════════════ 比例 / 尺寸档位 chip ═══════════════ -->
+        <ControlTemplate x:Key="SegmentButtonTemplate" TargetType="Button">
+            <Border x:Name="Bd"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"
+                    SnapsToDevicePixels="True">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Margin="{TemplateBinding Padding}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <Style x:Key="RatioChip" TargetType="Button">
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="MinWidth" Value="48"/>
+            <Setter Property="Padding" Value="8,0"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Tag" Value="12"/>
+            <Setter Property="Template" Value="{StaticResource SegmentButtonTemplate}"/>
+            <Setter Property="ToolTip" Value="{Binding ToolTip}"/>
+            <!-- 和「图片尺寸」档位共用同一套语言：未选中白底细描边，选中实心强调色 + 白字 -->
+            <Setter Property="Foreground" Value="#3A4354"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
+            <Setter Property="IsEnabled" Value="{Binding DataContext.Settings.IsRatioEnabled, RelativeSource={RelativeSource AncestorType=Window}}"/>
+            <Style.Triggers>
+                <!-- 快速出图：整组置灰、不高亮任何档位（配色与 SizeChip 的禁用态一致） -->
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Foreground" Value="#C3CAD5"/>
+                    <Setter Property="Background" Value="#F4F6F9"/>
+                    <Setter Property="BorderBrush" Value="#E9EDF3"/>
+                </Trigger>
+                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                    <Setter Property="Foreground" Value="White"/>
+                    <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SizeChip" TargetType="Button">
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="FontSize" Value="13.5"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Tag" Value="12"/>
+            <Setter Property="Template" Value="{StaticResource SegmentButtonTemplate}"/>
+            <Setter Property="ToolTip" Value="{Binding ToolTip}"/>
+            <Setter Property="Foreground" Value="#3A4354"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
+            <Setter Property="IsEnabled" Value="{Binding IsEnabled}"/>
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Foreground" Value="#C3CAD5"/>
+                    <Setter Property="Background" Value="#F4F6F9"/>
+                    <Setter Property="BorderBrush" Value="#E9EDF3"/>
+                </Trigger>
+                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                    <Setter Property="Foreground" Value="White"/>
+                    <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- 蒙版工具段选择 -->
+        <Style x:Key="ToolChip" TargetType="Button">
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Padding" Value="11,0"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Tag" Value="14"/>
+            <Setter Property="Template" Value="{StaticResource SegmentButtonTemplate}"/>
+            <Setter Property="Foreground" Value="#4A5464"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Path=(local:InteractiveHelper.IsActive), RelativeSource={RelativeSource Self}}" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="Background" Value="#FFFFFF"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- 提示词历史行内小按钮 -->
+        <Style x:Key="LinkButton" TargetType="Button">
+            <Setter Property="Height" Value="27"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Tag" Value="14"/>
+            <Setter Property="Template" Value="{StaticResource SegmentButtonTemplate}"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
+            <Setter Property="Foreground" Value="#2B3444"/>
+        </Style>
+
+        <Style x:Key="LinkButtonPrimary" TargetType="Button" BasedOn="{StaticResource LinkButton}">
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="BorderBrush" Value="#C9DBFF"/>
+            <Setter Property="Background" Value="#F6F9FF"/>
+        </Style>
+
+        <Style x:Key="LinkButtonDanger" TargetType="Button" BasedOn="{StaticResource LinkButton}">
+            <Setter Property="Foreground" Value="{StaticResource DangerBrush}"/>
+            <Setter Property="BorderBrush" Value="#F6D6D7"/>
+        </Style>
+
+        <!-- 历史卡片上的小图标按钮 -->
+        <Style x:Key="HistoryIconButton" TargetType="Button">
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
+            <Setter Property="Foreground" Value="#4A5464"/>
+            <Setter Property="Tag" Value="12"/>
+            <Setter Property="Template" Value="{StaticResource IconButtonTemplate}"/>
+        </Style>
+
+        <Style x:Key="RailButton" TargetType="Button">
+            <Setter Property="Width" Value="76"/>
+            <Setter Property="Padding" Value="0,8"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Tag" Value="12"/>
+            <Setter Property="Foreground" Value="#3A4354"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#E8EDF6"/>
+                            </Trigger>
+                            <DataTrigger Binding="{Binding Path=(local:InteractiveHelper.IsActive), RelativeSource={RelativeSource Self}}" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#E8EEFB"/>
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 圆角输入框：默认 TextBox 模板的边框是直角，和全局圆角刻度对不上 -->
+        <ControlTemplate x:Key="RoundedTextBoxTemplate" TargetType="TextBox">
+            <!-- Tag 是 object，TemplateBinding 不会把它转成 CornerRadius，必须走完整绑定 -->
+            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"
+                    SnapsToDevicePixels="True">
+                <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
+                              VerticalScrollBarVisibility="{TemplateBinding VerticalScrollBarVisibility}"/>
+            </Border>
+        </ControlTemplate>
+
+        <Style x:Key="PromptInput" TargetType="TextBox">
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Padding" Value="14,11,16,30"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Tag" Value="14"/>
+            <Setter Property="Template" Value="{StaticResource RoundedTextBoxTemplate}"/>
+        </Style>
+
+        <!-- ═══════════════ 弹层输入 ═══════════════ -->
+        <Style x:Key="PopFieldLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="{StaticResource Text3Brush}"/>
+            <Setter Property="Margin" Value="0,0,0,5"/>
+        </Style>
+
+        <Style x:Key="PopSectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#6B7482"/>
+            <Setter Property="Margin" Value="0,0,0,9"/>
+        </Style>
+
+        <Style x:Key="PopInput" TargetType="TextBox">
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Tag" Value="12"/>
+            <Setter Property="Template" Value="{StaticResource RoundedTextBoxTemplate}"/>
+        </Style>
+
+        <Style x:Key="PopSeparator" TargetType="Border">
+            <Setter Property="Height" Value="1"/>
+            <Setter Property="Background" Value="{StaticResource LineBrush}"/>
+            <Setter Property="Margin" Value="0,10"/>
+        </Style>
+
+        <!-- 大图预览上的按钮 -->
+        <Style x:Key="LightboxButton" TargetType="Button">
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Padding" Value="14,0"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="#1FFFFFFF"/>
+            <Setter Property="BorderBrush" Value="#4DFFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Tag" Value="12"/>
+            <Setter Property="Template" Value="{StaticResource FlatButtonTemplate}"/>
         </Style>
     </Window.Resources>
 
-    <Grid Margin="16">
+    <Grid Background="{StaticResource WindowGradient}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- ══════════════════════════ MAIN CONTENT ══════════════════════ -->
-        <Grid Grid.Row="0">
+        <!-- ═══════════════════════ 工作区 ═══════════════════════ -->
+        <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="360"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- ── LEFT: Image area ──────────────────────────────────── -->
-            <Grid Grid.Column="0" Margin="0,0,14,0">
+            <!-- ─────────── 内容区（纵向滚动，禁止整体缩放）─────────── -->
+            <ScrollViewer x:Name="ContentScroll" Grid.Column="0"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Background="Transparent">
+                <ScrollViewer.Resources>
+                    <Style TargetType="ScrollBar" BasedOn="{StaticResource SlimScrollBar}"/>
+                </ScrollViewer.Resources>
 
-                <!-- SINGLE MODE -->
-                <Grid Visibility="{Binding IsSingleMode, Converter={StaticResource BoolToVis}}">
+                <Grid x:Name="ContentRoot">
+                    <!-- 内容区左右内边距：宽窗 16/18，≤1120px 收紧到 14（对应原型 @media 1120） -->
+                    <Grid.Margin>
+                        <Binding Path="IsNarrow" Converter="{StaticResource AdaptiveContentMargin}"/>
+                    </Grid.Margin>
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
+                    <!-- 宽窗：内容列(*) + 14px 栏距 + 内容列(*)，右列卡片落在第 3 列（索引 2）；
+                         ≤1120px：两个内容列都收到 0，栏距列也归 0，四张卡片只占第 1 列 → 自动上下排列 -->
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="{Binding IsNarrow, Converter={StaticResource AdaptiveColumnWidth}}"/>
+                        <ColumnDefinition Width="{Binding IsNarrow, Converter={StaticResource AdaptiveColumnWidth}, ConverterParameter=gap}"/>
+                        <ColumnDefinition Width="{Binding IsNarrow, Converter={StaticResource AdaptiveColumnWidth}}"/>
+                    </Grid.ColumnDefinitions>
 
-                    <GroupBox Grid.Row="0" Header="{Binding [Source Image], Source={StaticResource L}}" Margin="0,0,0,8">
-                        <Border Background="#FAFAFA" BorderBrush="#DDD" BorderThickness="1">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
-                                <TextBlock Text="{Binding [Import model hint], Source={StaticResource L}}"
-                                           Grid.Row="0"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center"
-                                           Foreground="#999" FontSize="14"
-                                           Visibility="{Binding HasSourceImage, Converter={StaticResource InvBoolToVis}}"/>
-                                <Image Grid.Row="0" Source="{Binding SourceImage}" Stretch="Uniform" Margin="4"
-                                       Cursor="Hand"
-                                       Tag="{Binding SourceImage}"
-                                       MouseLeftButtonUp="AnyImage_PreviewClick"
-                                       Visibility="{Binding HasSourceImage, Converter={StaticResource BoolToVis}}"/>
-                                <InkCanvas Grid.Row="0" x:Name="MaskInkCanvas"
-                                           Background="Transparent"
-                                           Visibility="Collapsed"
-                                           IsHitTestVisible="False"
-                                           Margin="4"/>
-                                <Border Grid.Row="1"
-                                        Background="#F3F3F3"
-                                        BorderBrush="#DDD"
-                                        BorderThickness="0,1,0,0"
-                                        Padding="6"
-                                        Visibility="{Binding HasActiveReferences, Converter={StaticResource BoolToVis}}">
-                                    <DockPanel LastChildFill="True">
-                                        <TextBlock DockPanel.Dock="Left"
-                                                   Text="参考图"
-                                                   FontSize="11"
-                                                   Foreground="#666"
-                                                   VerticalAlignment="Center"
-                                                   Margin="0,0,8,0"/>
-                                        <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                                                      VerticalScrollBarVisibility="Disabled">
-                                            <ItemsControl ItemsSource="{Binding Settings.ActiveReferenceImages}">
-                                                <ItemsControl.ItemsPanel>
-                                                    <ItemsPanelTemplate>
-                                                        <StackPanel Orientation="Horizontal"/>
-                                                    </ItemsPanelTemplate>
-                                                </ItemsControl.ItemsPanel>
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <Border Width="72"
-                                                                Height="62"
-                                                                Background="White"
-                                                                BorderBrush="#D8D8D8"
-                                                                BorderThickness="1"
-                                                                Margin="0,0,6,0">
-                                                            <Grid>
-                                                                <Image Source="{Binding FilePath}"
-                                                                       Stretch="UniformToFill"/>
-                                                                <Border Background="#AA000000"
-                                                                        HorizontalAlignment="Left"
-                                                                        VerticalAlignment="Top"
-                                                                        Padding="4,1">
-                                                                    <TextBlock FontSize="10"
-                                                                               Foreground="White"
-                                                                               Text="{Binding DisplayLabel}"/>
-                                                                </Border>
-                                                                <Button Content="X"
-                                                                        Width="18"
-                                                                        Height="18"
-                                                                        FontSize="10"
-                                                                        HorizontalAlignment="Right"
-                                                                        VerticalAlignment="Top"
-                                                                        Background="#D9534F"
-                                                                        Foreground="White"
-                                                                        BorderThickness="0"
-                                                                        Command="{Binding DataContext.RemoveActiveReferenceCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                        CommandParameter="{Binding}"/>
-                                                            </Grid>
-                                                        </Border>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                        </ScrollViewer>
-                                    </DockPanel>
-                                </Border>
+                    <!-- ══════ 原始图像 ══════ -->
+                    <Grid Grid.Row="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=source.row}"
+                          Grid.Column="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=source.column}"
+                          Margin="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=source.margin}">
+                        <!-- 阴影层：卡片本体不挂 Effect，否则卡片里的中文小字会发虚 -->
+                        <Border Style="{StaticResource CardShadowLayer}"/>
+                        <Border x:Name="SourceCard" Style="{StaticResource Card}">
+                        <Grid VerticalAlignment="Top">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <Grid Grid.Row="0" Margin="0,0,0,13">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                    <Border Width="4" Height="16" CornerRadius="2"
+                                            Background="{StaticResource AccentBrush}" Margin="0,0,9,0"/>
+                                    <TextBlock Text="原始图像" Style="{StaticResource CardTitle}"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button Style="{StaticResource CardButton}" Margin="0,0,10,0"
+                                            Command="{Binding CaptureCommand}"
+                                            ToolTip="截取当前 Rhino 视口作为原图">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Width="16" Height="16" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.7"
+                                                  Data="M3 8.5V6a3 3 0 0 1 3-3h2.5M15.5 3H18a3 3 0 0 1 3 3v2.5M21 15.5V18a3 3 0 0 1-3 3h-2.5M8.5 21H6a3 3 0 0 1-3-3v-2.5"/>
+                                            <TextBlock Text="导入模型" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource CardButton}" Margin="0,0,10,0"
+                                            Command="{Binding UploadImageCommand}"
+                                            ToolTip="选择本地图片作为原图">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Width="16" Height="16" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.7"
+                                                  Data="M12 16V4.5M7.5 9 12 4.5 16.5 9M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/>
+                                            <TextBlock Text="上传图像" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <!-- 涂抹修改：蒙版编辑的唯一入口，快速出图下置灰 -->
+                                    <Button Command="{Binding ToggleMaskEditCommand}"
+                                            ToolTip="{Binding MaskEditEntryToolTip}">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsMaskEditing}" Value="True">
+                                                        <Setter Property="Background" Value="{StaticResource AccentSoftBrush}"/>
+                                                        <Setter Property="BorderBrush" Value="#BCD4FF"/>
+                                                        <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Width="16" Height="16" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.7"
+                                                  Data="M15.5 4.5 19.5 8.5 9 19H5v-4L15.5 4.5Z"/>
+                                            <TextBlock Text="{Binding MaskEditEntryText}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
                             </Grid>
-                        </Border>
-                    </GroupBox>
 
-                    <GroupBox Grid.Row="1" Header="{Binding [Generated Result], Source={StaticResource L}}" Margin="0,8,0,0">
-                        <Border Background="#FAFAFA" BorderBrush="#DDD" BorderThickness="1">
-                            <Grid>
-                                <TextBlock Text="Generated image will appear here"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center"
-                                           Foreground="#999" FontSize="14"
-                                           Visibility="{Binding HasResultImage, Converter={StaticResource InvBoolToVis}}"/>
-                                <Image Source="{Binding ResultImage}" Stretch="Uniform" Margin="4"
-                                       Cursor="Hand"
-                                       Tag="{Binding ResultImage}"
-                                       MouseLeftButtonUp="AnyImage_PreviewClick"
-                                       Visibility="{Binding HasResultImage, Converter={StaticResource BoolToVis}}"/>
-                            </Grid>
-                        </Border>
-                    </GroupBox>
-                </Grid>
+                            <!-- 预览：固定 3:2；源图与 InkCanvas 同一 Viewbox，画笔坐标 = 源图像素坐标 -->
+                            <Border x:Name="SourcePreviewBorder" Grid.Row="1" VerticalAlignment="Top"
+                                    Height="{Binding ActualWidth, ElementName=SourcePreviewBorder, Converter={StaticResource PreviewHeight}}"
+                                    Background="{StaticResource PreviewBgBrush}"
+                                    BorderBrush="{StaticResource CardLineBrush}" BorderThickness="1"
+                                    CornerRadius="14" ClipToBounds="True">
+                                <Grid x:Name="SourcePreviewCell">
+                                    <Rectangle Fill="{StaticResource CanvasGridBrush}"/>
+                                    <!-- 只负责显示：内容宽高 = 源图像素尺寸，等比缩放到 3:2 预览区里 -->
+                                    <Viewbox x:Name="SourceViewbox" Stretch="Uniform" Panel.ZIndex="0"
+                                             Visibility="{Binding HasSourceImage, Converter={StaticResource BoolToVis}}">
+                                        <Image x:Name="SourcePixelImage" Stretch="Fill"/>
+                                    </Viewbox>
 
-                <!-- BATCH MODE -->
-                <Grid Visibility="{Binding IsBatchMode, Converter={StaticResource BoolToVis}}">
-                    <!-- Empty state -->
-                    <TextBlock Text="{Binding [Load named views to begin], Source={StaticResource L}}"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                               Foreground="#CCC" FontSize="14"
-                               Visibility="{Binding BatchVM.HasBatchItems, Converter={StaticResource InvBoolToVis}}"/>
+                                    <!-- 蒙版输入层：与 Viewbox 平级、声明在它后面、尺寸等于 Viewbox 实际渲染尺寸。
+                                         与显示层彻底解耦，命中测试不依赖任何嵌套顺序；
+                                         已显示图片时它是唯一吃掉指针的元素，所以涂抹一定能落下笔画。 -->
+                                    <InkCanvas x:Name="MaskInkCanvas" Background="Transparent"
+                                               EditingMode="Ink" Panel.ZIndex="1"
+                                               HorizontalAlignment="Left" VerticalAlignment="Top"
+                                               Width="{Binding ActualWidth, ElementName=SourceViewbox}"
+                                               Height="{Binding ActualHeight, ElementName=SourceViewbox}"
+                                               Visibility="{Binding HasSourceImage, Converter={StaticResource BoolToVis}}"
+                                               IsHitTestVisible="{Binding IsMaskEditing}"/>
 
-                    <!-- Items list -->
-                    <ScrollViewer VerticalScrollBarVisibility="Auto"
-                                  Visibility="{Binding BatchVM.HasBatchItems, Converter={StaticResource BoolToVis}}">
-                        <ItemsControl ItemsSource="{Binding BatchVM.Items}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Margin="0,0,0,6" Background="White"
-                                            BorderBrush="#E0E0E0" BorderThickness="1" CornerRadius="5">
-                                        <StackPanel>
-                                        <Grid Margin="10,8,10,4">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="22"/>
-                                                <ColumnDefinition Width="105"/>
-                                                <ColumnDefinition Width="175"/>
-                                                <ColumnDefinition Width="26"/>
-                                                <ColumnDefinition Width="175"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
+                                    <!-- 空状态：点击 = 上传图像 -->
+                                    <Button Background="Transparent" BorderThickness="0" Cursor="Hand" Panel.ZIndex="3"
+                                            Command="{Binding UploadImageCommand}"
+                                            Visibility="{Binding HasSourceImage, Converter={StaticResource InvBoolToVis}}"
+                                            ToolTip="导入模型，或选择本地图片作为原始图像">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <!-- 背景必须透明，否则盖住预览区底下的画布网格 -->
+                                                <Border Background="Transparent" BorderBrush="{StaticResource EmptyDashBrush}"
+                                                        BorderThickness="1" CornerRadius="14">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                        <TextBlock Text="暂无原图" FontSize="15.5" FontWeight="SemiBold"
+                                                   Foreground="#33405A"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Button>
 
-                                            <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" VerticalAlignment="Center"/>
+                                    <!-- 有原图：点击看大图。蒙版编辑时显式让出命中测试，把指针完全交给 InkCanvas -->
+                                    <Button x:Name="SourcePreviewHitArea" Background="Transparent" BorderThickness="0"
+                                            Cursor="Hand" Panel.ZIndex="2"
+                                            Click="SourcePreview_Click"
+                                            Visibility="{Binding HasSourceImage, Converter={StaticResource BoolToVis}}"
+                                            ToolTip="点击查看大图">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border Background="Transparent"/>
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                        <Button.Style>
+                                            <Style TargetType="Button">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsMaskEditing}" Value="True">
+                                                        <Setter Property="IsHitTestVisible" Value="False"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
 
-                                            <TextBlock Grid.Column="1" Text="{Binding ViewName}"
-                                                       FontWeight="SemiBold" FontSize="11"
-                                                       TextWrapping="Wrap" VerticalAlignment="Center"
-                                                       Margin="6,0"/>
+                                    <!-- 笔刷光标：只靠 Margin 定位，界面里没有任何 Transform -->
+                                    <Ellipse x:Name="BrushCursor" Width="16" Height="16" Visibility="Collapsed"
+                                             HorizontalAlignment="Left" VerticalAlignment="Top"
+                                             Panel.ZIndex="4" IsHitTestVisible="False"
+                                             Stroke="White" StrokeThickness="1.5" StrokeDashArray="2 1"/>
+                                    <Ellipse x:Name="BrushCursorInner" Width="14" Height="14" Visibility="Collapsed"
+                                             HorizontalAlignment="Left" VerticalAlignment="Top"
+                                             Panel.ZIndex="5" IsHitTestVisible="False"
+                                             Stroke="#E5484D" StrokeThickness="1.2"/>
 
-                                            <!-- Source thumbnail -->
-                                            <Border Grid.Column="2" Width="175" Height="115"
-                                                    Background="#F5F5F5" BorderBrush="#E8E8E8" BorderThickness="1">
-                                                <Grid>
-                                                    <TextBlock Text="{Binding [Not captured], Source={StaticResource L}}" HorizontalAlignment="Center"
-                                                               VerticalAlignment="Center" Foreground="#CCC" FontSize="11"
-                                                               Visibility="{Binding HasSourceImage, Converter={StaticResource InvBoolToVis}}"/>
-                                                    <Image Source="{Binding SourceImage}" Stretch="Uniform" Margin="2"
-                                                           Cursor="Hand"
-                                                           Tag="{Binding SourceImage}"
-                                                           MouseLeftButtonUp="AnyImage_PreviewClick"
-                                                           Visibility="{Binding HasSourceImage, Converter={StaticResource BoolToVis}}"/>
-                                                </Grid>
+                                    <!-- 蒙版状态条（浮在图片内部左上） -->
+                                    <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
+                                            Padding="12,6" CornerRadius="999" Background="#B81A2233" Panel.ZIndex="6"
+                                            Visibility="{Binding MaskToolbarVisibility}" IsHitTestVisible="False">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Ellipse Width="7" Height="7" Fill="#FF5B60" VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding MaskTopText}" Foreground="White" FontSize="12"
+                                                       Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- 蒙版工具栏（浮在图片内部底部居中） -->
+                                    <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="12"
+                                            Padding="10,8" CornerRadius="11" Background="#F7FFFFFF" Panel.ZIndex="6"
+                                            BorderBrush="{StaticResource Line2Brush}" BorderThickness="1"
+                                            Visibility="{Binding MaskToolbarVisibility}">
+                                        <Border.Effect>
+                                            <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.18" Color="#101828"/>
+                                        </Border.Effect>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Border Background="#F1F4F9" CornerRadius="14" Padding="3">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Button Style="{StaticResource ToolChip}"
+                                                            local:InteractiveHelper.IsActive="{Binding IsBrushTool, Mode=OneWay}"
+                                                            Command="{Binding SelectBrushCommand}">
+                                                        <TextBlock Text="画笔"/>
+                                                    </Button>
+                                                    <Button Style="{StaticResource ToolChip}" Margin="4,0,0,0"
+                                                            local:InteractiveHelper.IsActive="{Binding IsEraseTool, Mode=OneWay}"
+                                                            Command="{Binding SelectEraserCommand}">
+                                                        <TextBlock Text="擦除"/>
+                                                    </Button>
+                                                </StackPanel>
                                             </Border>
-
-                                            <TextBlock Grid.Column="3" Text="→" FontSize="18" Foreground="#CCC"
-                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
-
-                                            <!-- Result thumbnail -->
-                                            <Border Grid.Column="4" Width="175" Height="115"
-                                                    Background="#F5F5F5" BorderBrush="#E8E8E8" BorderThickness="1">
-                                                <Grid>
-                                                    <TextBlock Text="{Binding Status}"
-                                                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                               Foreground="#CCC" FontSize="11"
-                                                               Visibility="{Binding HasResult, Converter={StaticResource InvBoolToVis}}"/>
-                                                    <Image Source="{Binding ResultImage}" Stretch="Uniform" Margin="2"
-                                                           Cursor="Hand"
-                                                           Tag="{Binding ResultImage}"
-                                                           MouseLeftButtonUp="AnyImage_PreviewClick"
-                                                           Visibility="{Binding HasResult, Converter={StaticResource BoolToVis}}"/>
-                                                    <Border Background="#CCFFFFFF" CornerRadius="2"
-                                                            Visibility="{Binding IsGenerating, Converter={StaticResource BoolToVis}}">
-                                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                                            <ProgressBar IsIndeterminate="True" Width="70" Height="3"/>
-                                                            <TextBlock Text="生成中..." HorizontalAlignment="Center"
-                                                                       Margin="0,4,0,0" FontSize="10" Foreground="#555"/>
-                                                        </StackPanel>
-                                                    </Border>
-                                                </Grid>
-                                            </Border>
-
-                                            <!-- Per-item actions -->
-                                            <StackPanel Grid.Column="5" Margin="8,0,0,0" VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding Status}" FontSize="10"
-                                                           Foreground="#888" Margin="0,0,0,6" TextWrapping="Wrap"/>
-                                                <Button Content="{Binding [Refresh], Source={StaticResource L}}" Tag="{Binding}"
-                                                        Click="BatchCaptureOne_Click"
-                                                        Background="#6AAF6A" Foreground="White"
-                                                        Style="{StaticResource BtnSmall}" Margin="0,0,0,4"/>
-                                                <Button Content="{Binding [Regenerate], Source={StaticResource L}}" Tag="{Binding}"
-                                                        Click="BatchRegenerateOne_Click"
-                                                        IsEnabled="{Binding HasSourceImage}"
-                                                        Background="#E67E22" Foreground="White"
-                                                        Style="{StaticResource BtnSmall}" Margin="0,0,0,4"/>
-                                                <Button Content="{Binding [Save], Source={StaticResource L}}" Tag="{Binding}"
-                                                        Click="BatchSaveOne_Click"
-                                                        IsEnabled="{Binding HasResult}"
-                                                        Background="#4A90D9" Foreground="White"
-                                                        Style="{StaticResource BtnSmall}"/>
+                                            <StackPanel Orientation="Horizontal" Margin="10,0,0,0" VerticalAlignment="Center">
+                                                <TextBlock Text="画笔大小" FontSize="12.5" Foreground="{StaticResource Text2Brush}"
+                                                           VerticalAlignment="Center"/>
+                                                <Slider x:Name="BrushSizeSlider" Width="104" Margin="8,0,0,0"
+                                                        Minimum="8" Maximum="140" TickFrequency="2"
+                                                        IsSnapToTickEnabled="True" VerticalAlignment="Center"
+                                                        Value="{Binding MaskBrushSize, Mode=TwoWay}"
+                                                        ValueChanged="BrushSizeSlider_ValueChanged"/>
+                                                <TextBlock Text="{Binding MaskBrushSizeText}" FontSize="12.5" FontWeight="SemiBold"
+                                                           Foreground="#2B3444" MinWidth="34" Margin="8,0,0,0"
+                                                           VerticalAlignment="Center"/>
                                             </StackPanel>
-                                        </Grid>
-                                        <!-- Per-item addon prompt -->
+                                            <Border Width="1" Height="22" Background="{StaticResource Line2Brush}"
+                                                    Margin="10,0" VerticalAlignment="Center"/>
+                                            <Button Style="{StaticResource SmallButton}" Content="清空蒙版"
+                                                    Command="{Binding ClearMaskStrokesCommand}"/>
+                                            <Button Style="{StaticResource SmallButton}" Content="取消" Margin="8,0,0,0"
+                                                    Command="{Binding CancelMaskEditCommand}"/>
+                                            <Button Style="{StaticResource PrimaryButton}" Height="28" Padding="10,0"
+                                                    FontSize="12.5" Tag="14" Content="完成编辑" Margin="8,0,0,0"
+                                                    Command="{Binding FinishMaskEditCommand}"/>
+                                        </StackPanel>
+                                    </Border>
 
-                                        <Grid Margin="10,0,10,8">
+                                    <!-- 蒙版已应用提示条 -->
+                                    <Border HorizontalAlignment="Stretch" VerticalAlignment="Bottom" Margin="12"
+                                            Padding="12,9" CornerRadius="11" Background="#F7FFFFFF" Panel.ZIndex="6"
+                                            BorderBrush="{StaticResource Line2Brush}" BorderThickness="1"
+                                            Visibility="{Binding MaskAppliedBarVisibility}">
+                                        <Border.Effect>
+                                            <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.16" Color="#101828"/>
+                                        </Border.Effect>
+                                        <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="+" FontSize="11" Foreground="#AAA"
-                                                       VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                            <TextBox Grid.Column="1"
-                                                     Text="{Binding AddonPrompt, UpdateSourceTrigger=PropertyChanged}"
-                                                     FontSize="11" Padding="5,3"
-                                                     BorderBrush="#E8E8E8" BorderThickness="1"
-                                                     Background="#FAFAFA"
-                                                     ToolTip="{Binding [Addon prompt hint], Source={StaticResource L}}"/>
+                                            <Path Grid.Column="0" Width="15" Height="15" Stretch="Uniform"
+                                                  Stroke="{StaticResource AccentBrush}" StrokeThickness="2"
+                                                  Data="M20 6 9 17l-5-5" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding MaskStatusText}" FontSize="12.5"
+                                                       Foreground="{StaticResource Text2Brush}" Margin="8,0,0,0"
+                                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                            <Button Grid.Column="2" Style="{StaticResource SmallButton}" Content="重新编辑"
+                                                    Margin="8,0,0,0" Command="{Binding EnterMaskEditCommand}"/>
+                                            <Button Grid.Column="3" Style="{StaticResource SmallButton}" Content="清除蒙版"
+                                                    Margin="8,0,0,0" Command="{Binding DropMaskCommand}"/>
                                         </Grid>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        </Border>
+                    </Grid>
+
+                    <!-- ══════ 生成结果 ══════ -->
+                    <Grid Grid.Row="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=result.row}"
+                          Grid.Column="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=result.column}"
+                          Margin="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=result.margin}">
+                        <!-- 阴影层：卡片本体不挂 Effect，否则卡片里的中文小字会发虚 -->
+                        <Border Style="{StaticResource CardShadowLayer}"/>
+                        <Border x:Name="ResultCard" Style="{StaticResource Card}">
+                        <Grid VerticalAlignment="Top">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <Grid Grid.Row="0" Margin="0,0,0,13">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                    <Border Width="4" Height="16" CornerRadius="2"
+                                            Background="{StaticResource VioletBrush}" Margin="0,0,9,0"/>
+                                    <TextBlock Text="生成结果" Style="{StaticResource CardTitle}"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button Style="{StaticResource CardButton}" Margin="0,0,10,0"
+                                            Command="{Binding UseResultAsSourceCommand}"
+                                            IsEnabled="{Binding HasResultImage}"
+                                            ToolTip="把生成结果放回原始图像，继续涂抹修改">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Width="15" Height="15" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.7"
+                                                  Data="M4 11a8 8 0 1 1 2.3 5.7M4 5v6h6"/>
+                                            <TextBlock Text="再次编辑" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource CardButton}" Margin="0,0,10,0"
+                                            Command="{Binding SaveResultCommand}"
+                                            IsEnabled="{Binding HasResultImage}" ToolTip="下载结果图">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Width="15" Height="15" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.7"
+                                                  Data="M12 4v11M7.5 10.5 12 15l4.5-4.5M4.5 19.5h15"/>
+                                            <TextBlock Text="下载" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource CardButton}" Margin="0,0,10,0"
+                                            Click="CopyResult_Click"
+                                            IsEnabled="{Binding HasResultImage}" ToolTip="复制结果图到剪贴板">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Width="15" Height="15" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.7"
+                                                  Data="M9 9h11v11H9zM15 5.5A1.5 1.5 0 0 0 13.5 4H5.5A1.5 1.5 0 0 0 4 5.5v8A1.5 1.5 0 0 0 5.5 15"/>
+                                            <TextBlock Text="复制图片" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource CardButton}" Margin="0,0,10,0"
+                                            Command="{Binding GenerateCommand}"
+                                            ToolTip="用当前提示词重新生成">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Width="15" Height="15" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.7"
+                                                  Data="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/>
+                                            <TextBlock Text="重新生成" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource CardIconButton}" Click="DeleteResult_Click"
+                                            IsEnabled="{Binding HasResultImage}" ToolTip="删除结果">
+                                        <Path Width="15" Height="15" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.7"
+                                              Data="M4.5 7h15M9.5 7V5.2A1.2 1.2 0 0 1 10.7 4h2.6a1.2 1.2 0 0 1 1.2 1.2V7M6.5 7l.8 12.1A1.5 1.5 0 0 0 8.8 20.5h6.4a1.5 1.5 0 0 0 1.5-1.4L17.5 7"/>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+
+                            <Border x:Name="ResultPreviewBorder" Grid.Row="1" VerticalAlignment="Top"
+                                    Height="{Binding ActualWidth, ElementName=SourcePreviewBorder, Converter={StaticResource PreviewHeight}}"
+                                    Background="{StaticResource PreviewBgBrush}"
+                                    BorderBrush="{StaticResource CardLineBrush}" BorderThickness="1"
+                                    CornerRadius="14" ClipToBounds="True">
+                                <Grid>
+                                    <Rectangle Fill="{StaticResource CanvasGridBrush}"/>
+                                    <!-- 空状态 -->
+                                    <Border Visibility="{Binding ResultEmptyVisibility}"
+                                            BorderBrush="{StaticResource EmptyDashBrush}" BorderThickness="1"
+                                            CornerRadius="14" Background="Transparent">
+                                        <TextBlock Text="暂无生成结果" FontSize="15.5" FontWeight="SemiBold"
+                                                   Foreground="#33405A"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+
+                                    <!-- 生成中 -->
+                                    <Border Background="#F7F9FD" Visibility="{Binding GeneratePanelVisibility}">
+                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <ProgressBar Width="200" Height="6" Minimum="0" Maximum="100"
+                                                         Value="{Binding GenerationProgress, Mode=OneWay}"
+                                                         Foreground="{StaticResource AccentBrush}" Background="#E2E9F4"/>
+                                            <TextBlock Text="{Binding GenerationProgressText}" FontSize="14"
+                                                       Foreground="#3A4354" HorizontalAlignment="Center" Margin="0,14,0,0"/>
+                                            <TextBlock Text="{Binding GenerationDetailText}" FontSize="12.5"
+                                                       Foreground="{StaticResource Text3Brush}"
+                                                       HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- 结果图：点击看大图 -->
+                                    <Button Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                            Click="ResultPreview_Click"
+                                            Visibility="{Binding ResultPreviewVisibility}" ToolTip="点击查看大图">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border Background="Transparent">
+                                                    <ContentPresenter/>
+                                                </Border>
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                        <Image x:Name="ResultImageElement" Source="{Binding ResultImage}" Stretch="Uniform"/>
+                                    </Button>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        </Border>
+                    </Grid>
+
+                    <!-- ══════ 参考图像 ══════ -->
+                    <Grid Grid.Row="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=reference.row}"
+                          Grid.Column="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=reference.column}"
+                            Grid.ColumnSpan="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=reference.span}"
+                          Margin="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=reference.margin}">
+                        <!-- 阴影层：卡片本体不挂 Effect，否则卡片里的中文小字会发虚 -->
+                        <Border Style="{StaticResource CardShadowLayer}"/>
+                        <Border x:Name="ReferenceCard" Style="{StaticResource Card}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center"
+                                        Margin="0,0,0,13">
+                                <Border Width="4" Height="16" CornerRadius="2"
+                                        Background="{StaticResource AccentBrush}" Margin="0,0,9,0"/>
+                                <TextBlock Text="参考图像" Style="{StaticResource CardTitle}"/>
+                                <TextBlock Text="可选" FontSize="12" Foreground="{StaticResource Text3Brush}"
+                                           Margin="8,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto"
+                                          VerticalScrollBarVisibility="Disabled">
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Width="132" Height="92" Margin="0,0,12,0" Cursor="Hand"
+                                            Command="{Binding AddReferenceImagesCommand}"
+                                            Visibility="{Binding ReferenceAddVisibility}"
+                                            ToolTip="最多 3 张，作为图 2..图 4 参与生成">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border Background="#FBFCFF" BorderBrush="#CDD8E8" BorderThickness="1"
+                                                        CornerRadius="14">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <Path Width="20" Height="20" Stretch="Uniform" Stroke="#7B8595" StrokeThickness="1.6"
+                                                  Data="M12 5.5v13M5.5 12h13"/>
+                                            <TextBlock Text="添加参考图" FontSize="13" Foreground="#7B8595"
+                                                       HorizontalAlignment="Center" Margin="0,7,0,0"/>
+                                        </StackPanel>
+                                    </Button>
+
+                                    <ItemsControl ItemsSource="{Binding ActiveReferences}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel Orientation="Horizontal"/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Width="132" Height="92" Margin="0,0,12,0">
+                                                    <Button BorderThickness="0" Padding="0"
+                                                            Cursor="Hand" Click="ReferenceThumb_Click" Tag="{Binding}"
+                                                            ToolTip="点击查看大图">
+                                                        <Button.Background>
+                                                            <ImageBrush ImageSource="{Binding FilePath}" Stretch="UniformToFill"/>
+                                                        </Button.Background>
+                                                        <Button.Template>
+                                                            <ControlTemplate TargetType="Button">
+                                                                <Border CornerRadius="14"
+                                                                        BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                                                                        Background="{TemplateBinding Background}"/>
+                                                            </ControlTemplate>
+                                                        </Button.Template>
+                                                    </Button>
+                                                    <Button HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                            Margin="0,5,5,0" Width="20" Height="20" Padding="0"
+                                                            Cursor="Hand" Background="#941A2233" BorderThickness="0"
+                                                            Foreground="White" ToolTip="删除参考图"
+                                                            Command="{Binding DataContext.RemoveActiveReferenceCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}">
+                                                        <Button.Template>
+                                                            <ControlTemplate TargetType="Button">
+                                                                <Border Background="{TemplateBinding Background}" CornerRadius="11">
+                                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                                </Border>
+                                                            </ControlTemplate>
+                                                        </Button.Template>
+                                                        <Path Width="10" Height="10" Stretch="Uniform" Stroke="White"
+                                                              StrokeThickness="2.4" Data="M6 6l12 12M18 6 6 18"/>
+                                                    </Button>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <TextBlock Text="{Binding ReferenceEmptyHint}" FontSize="12.5"
+                                               Foreground="{StaticResource Text3Brush}" VerticalAlignment="Center"
+                                               Margin="4,0,0,0" TextWrapping="Wrap" MaxWidth="260"
+                                               Visibility="{Binding ReferenceEmptyHintVisibility}"/>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
+                        </Border>
+                    </Grid>
+
+                    <!-- ══════ 模型设置 ══════ -->
+                    <Grid Grid.Row="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=settings.row}"
+                          Grid.Column="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=settings.column}"
+                          Margin="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=settings.margin}">
+                        <!-- 阴影层：卡片本体不挂 Effect，否则卡片里的中文小字会发虚 -->
+                        <Border Style="{StaticResource CardShadowLayer}"/>
+                        <Border x:Name="SettingsCard" Style="{StaticResource Card}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Margin="0,0,0,10">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                    <Border Width="4" Height="16" CornerRadius="2"
+                                            Background="{StaticResource AccentBrush}" Margin="0,0,9,0"/>
+                                    <TextBlock Text="模型设置" Style="{StaticResource CardTitle}"/>
+                                </StackPanel>
+                                <!-- 状态摘要搬到标题行右端：原来这行右边整片是空的 -->
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Settings.AutoRatioHint}" FontSize="11.5"
+                                               Foreground="{StaticResource Text3Brush}"/>
+                                    <TextBlock Text="{Binding Settings.SizeSummary}" FontSize="11.5"
+                                               Foreground="{StaticResource Text3Brush}" Margin="10,0,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                            <Grid Grid.Row="1">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="22"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- 快速出图 / 标准模式 -->
+                                <StackPanel Grid.Row="0" Grid.Column="0">
+                                    <Button Style="{StaticResource ModeButton}"
+                                            local:InteractiveHelper.IsActive="{Binding Settings.IsFastMode, Mode=OneWay}"
+                                            Command="{Binding SelectFastModeCommand}"
+                                            ToolTip="最快速度，尺寸自适应，不支持涂抹">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Width="15" Height="15" Stretch="Uniform" Fill="#3A4354"
+                                                  Data="M13.6 2 5 13.4h5.2L9.4 22 19 10.2h-5.6L13.6 2Z"/>
+                                            <TextBlock Text="快速出图" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <TextBlock Text="最快速度，尺寸自适应，不支持涂抹" Style="{StaticResource ModeDescription}"/>
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="0" Grid.Column="2">
+                                    <Button Style="{StaticResource ModeButton}"
+                                            local:InteractiveHelper.IsActive="{Binding Settings.IsStandardMode, Mode=OneWay}"
+                                            Command="{Binding SelectStandardModeCommand}"
+                                            ToolTip="支持 4K，支持涂抹/蒙版">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Width="15" Height="15" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.7"
+                                                  Data="M4 8h16M4 16h16M12 8a3 3 0 1 0 6 0 3 3 0 1 0-6 0M6 16a3 3 0 1 0 6 0 3 3 0 1 0-6 0"/>
+                                            <TextBlock Text="标准模式" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <TextBlock Text="支持4K，支持涂抹/蒙版" Style="{StaticResource ModeDescription}"/>
+                                </StackPanel>
+
+                                <!-- 图片尺寸：标签与档位同一行，左侧固定列宽让两行标签对齐 -->
+                                <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,12,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="66"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="图片尺寸" FontSize="12.5" Foreground="#6B7482"
+                                               VerticalAlignment="Center"/>
+                                    <ItemsControl Grid.Column="1" ItemsSource="{Binding Settings.ImageSizes}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel Orientation="Horizontal"/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Style="{StaticResource SizeChip}" MinWidth="88"
+                                                        Content="{Binding Key}"
+                                                        Command="{Binding DataContext.SelectSizeCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding Key}"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Grid>
+
+                                <!-- 图片比例：同样内联 -->
+                                <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="66"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="图片比例" FontSize="12.5" Foreground="#6B7482"
+                                               VerticalAlignment="Center"/>
+                                    <ItemsControl Grid.Column="1" ItemsSource="{Binding Settings.AspectRatios}"
+                                                  IsEnabled="{Binding Settings.IsRatioEnabled}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel Orientation="Horizontal"/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Style="{StaticResource RatioChip}"
+                                                        Content="{Binding Name}"
+                                                        Command="{Binding DataContext.SelectRatioCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding Ratio}"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Grid>
+                            </Grid>
+                        </Grid>
+                        </Border>
+                    </Grid>
+
+                    <!-- ══════ 提示词 ══════ -->
+                    <StackPanel x:Name="PromptBlock" Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3"
+                                Margin="0,14,0,0">
+                        <!-- 左内缩 = 卡片边框 1 + 卡片 padding 17，让标题落在卡片内容线上（x=34） -->
+                        <TextBlock Text="提示词" FontSize="14" FontWeight="SemiBold" Foreground="#141A26"
+                                   Margin="18,0,0,8"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="14"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid Grid.Column="0">
+                                <TextBox x:Name="PromptBox" Style="{StaticResource PromptInput}" Height="96"
+                                         Text="{Binding PromptText, UpdateSourceTrigger=PropertyChanged}"
+                                         AcceptsReturn="True" TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"
+                                         MaxLength="2000"/>
+                                <TextBlock Text="{Binding PromptCounterText}" FontSize="12" Foreground="#A8B0BD"
+                                           HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                           Margin="0,0,14,9" IsHitTestVisible="False"/>
+                            </Grid>
+                            <!-- 高度撑满整行，与左侧提示词框等高 -->
+                            <Button Grid.Column="2" Style="{StaticResource GenerateButton}"
+                                    Height="Auto" VerticalAlignment="Stretch"
+                                    Command="{Binding GenerateCommand}"
+                                    ToolTip="{Binding GenerateButtonToolTip}">
+                                <TextBlock Text="{Binding GenerateButtonText}"/>
+                            </Button>
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- ══════ 提示词历史（默认折叠）══════ -->
+                    <Border x:Name="PromptHistoryCard" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3"
+                            Margin="0,14,0,0" Background="White"
+                            BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="16">
+                        <StackPanel>
+                            <Button Height="54" Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                    Command="{Binding TogglePromptHistoryCommand}"
+                                    ToolTip="{Binding PromptHistoryToggleToolTip}">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                                CornerRadius="16,16,0,0">
+                                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                                              Margin="18,0"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Bd" Property="Background" Value="#FAFBFE"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                                <Grid>
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                                        <Path Width="17" Height="17" Stretch="Uniform" Stroke="#2B3444" StrokeThickness="1.7"
+                                              Data="M6 3.5h8.5L19 8v12.5H6zM14 3.5V8h5M9 12.5h7M9 16h5"
+                                              VerticalAlignment="Center"/>
+                                        <TextBlock Text="提示词历史" FontSize="14" Foreground="#2B3444"
+                                                   Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                        <Border Background="#EEF1F6" CornerRadius="999" MinWidth="24" Height="20"
+                                                Margin="8,0,0,0" Padding="8,0">
+                                            <TextBlock Text="{Binding PromptHistoryCountText}" FontSize="12"
+                                                       Foreground="{StaticResource Text2Brush}"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center"
+                                               FontSize="12" Foreground="#8B94A3"
+                                               Text="{Binding IsPromptHistoryExpanded, Converter={StaticResource ExpandChevron}}"/>
+                                </Grid>
+                            </Button>
+
+                            <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0"
+                                    Visibility="{Binding IsPromptHistoryExpanded, Converter={StaticResource BoolToVis}}">
+                                <ScrollViewer MaxHeight="186" VerticalScrollBarVisibility="Auto">
+                                    <Grid>
+                                        <TextBlock Text="暂无提示词记录" FontSize="13" Foreground="{StaticResource Text3Brush}"
+                                                   HorizontalAlignment="Center" Margin="0,40"
+                                                   Visibility="{Binding PromptHistoryEmptyVisibility}"/>
+                                        <ItemsControl ItemsSource="{Binding PromptHistory}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="18,11">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0" Margin="0,0,14,0">
+                                                            <TextBlock Text="{Binding Text}" FontSize="13.5" Foreground="#2B3444"
+                                                                       TextWrapping="Wrap"/>
+                                                            <TextBlock Text="{Binding DisplayTime}" FontSize="12"
+                                                                       Foreground="{StaticResource Text3Brush}"
+                                                                       Margin="0,4,0,0"/>
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                                                            <Button Style="{StaticResource LinkButtonPrimary}" Content="使用"
+                                                                    Command="{Binding DataContext.UsePromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                    CommandParameter="{Binding}"/>
+                                                            <Button Style="{StaticResource LinkButtonDanger}" Content="删除"
+                                                                    Margin="6,0,0,0"
+                                                                    Command="{Binding DataContext.DeletePromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                    CommandParameter="{Binding}"/>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Grid>
+                                </ScrollViewer>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                    <!-- ══════ 状态条：StatusMessage 之前只被赋值、从没显示过 ══════ -->
+                    <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="3"
+                                Orientation="Horizontal" Margin="2,12,0,4">
+                        <Ellipse Width="7" Height="7" Fill="#22C08A" VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding StatusMessage}" FontSize="12"
+                                   Foreground="{StaticResource Text3Brush}" Margin="8,0,0,0"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
+            <!-- ─────────── 最右 84px 窄栏 ─────────── -->
+            <Border Grid.Column="1" Width="84" Background="#FFFFFF"
+                    BorderBrush="{StaticResource LineBrush}" BorderThickness="1,0,0,0">
+                <StackPanel Margin="0,12">
+                    <Button x:Name="HistoryRailButton" Style="{StaticResource RailButton}"
+                            Click="HistoryRailButton_Click"
+                            local:InteractiveHelper.IsActive="{Binding IsHistoryPanelOpen, Mode=OneWay}"
+                            ToolTip="历史记录">
+                        <StackPanel>
+                            <Path Width="22" Height="22" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.6"
+                                  Data="M12 3.4a8.6 8.6 0 1 1 0 17.2 8.6 8.6 0 0 1 0-17.2ZM12 7.6V12l3 2"
+                                  HorizontalAlignment="Center"/>
+                            <TextBlock Text="历史记录" FontSize="12" Foreground="#3A4354"
+                                       HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                            <Border Background="{StaticResource AccentBrush}" CornerRadius="999" MinWidth="24"
+                                    Height="20" Margin="0,6,0,0" Padding="8,0" HorizontalAlignment="Center">
+                                <TextBlock Text="{Binding GenerationHistory.Count}" FontSize="12" FontWeight="SemiBold"
+                                           Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </StackPanel>
+                    </Button>
+                    <Border Height="1" Width="52" Background="{StaticResource LineBrush}" Margin="0,8"/>
+                    <Button x:Name="SettingsRailButton" Style="{StaticResource RailButton}"
+                            Click="SettingsRailButton_Click"
+                            local:InteractiveHelper.IsActive="{Binding IsSettingsPanelOpen, Mode=OneWay}"
+                            ToolTip="设置">
+                        <Path Width="21" Height="21" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.6"
+                              Data="M12 8.8a3.2 3.2 0 1 1 0 6.4 3.2 3.2 0 0 1 0-6.4ZM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10.6 3.09V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"
+                              HorizontalAlignment="Center"/>
+                    </Button>
+                </StackPanel>
+            </Border>
+
+            <!-- ─────────── 历史记录抽屉（可见性只从 HistoryPanelVisibility 派生）─────────── -->
+            <Border Grid.Column="0" Grid.ColumnSpan="2" HorizontalAlignment="Right"
+                    Margin="0,0,84,0" Width="368"
+                    Background="White" BorderBrush="{StaticResource LineBrush}" BorderThickness="1,0,0,0"
+                    Panel.ZIndex="20" Visibility="{Binding HistoryPanelVisibility}"
+                    MouseLeftButtonUp="FloatPanel_MouseLeftButtonUp">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="30" ShadowDepth="-8" Direction="180" Opacity="0.10" Color="#101828"/>
+                </Border.Effect>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="54"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Margin="18,0,14,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Left">
+                            <Path Width="17" Height="17" Stretch="Uniform" Stroke="#141A26" StrokeThickness="1.7"
+                                  Data="M12 3.4a8.6 8.6 0 1 1 0 17.2 8.6 8.6 0 0 1 0-17.2ZM12 7.6V12l3 2"/>
+                            <TextBlock Text="历史记录" FontSize="14.5" FontWeight="SemiBold" Foreground="#141A26"
+                                       Margin="9,0,0,0" VerticalAlignment="Center"/>
+                            <Border Background="#EEF1F6" CornerRadius="999" MinWidth="24" Height="20"
+                                    Margin="9,0,0,0" Padding="8,0">
+                                <TextBlock Text="{Binding HistoryCountText}" FontSize="12"
+                                           Foreground="{StaticResource Text2Brush}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           ToolTip="{Binding HistoryLimitHint}"/>
+                            </Border>
+                        </StackPanel>
+                        <Button HorizontalAlignment="Right" VerticalAlignment="Center"
+                                Style="{StaticResource CardIconButton}" Width="28" Height="28"
+                                Click="CloseHistoryPanel_Click" ToolTip="收起">
+                            <Path Width="14" Height="14" Stretch="Uniform" Stroke="#3A4354" StrokeThickness="1.9"
+                                  Data="M6 6l12 12M18 6 6 18"/>
+                        </Button>
+                    </Grid>
+
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                  >
+                        <ItemsControl ItemsSource="{Binding GenerationHistory}" Margin="7,12,7,12">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Columns="2"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="White" BorderBrush="{StaticResource LineBrush}"
+                                            BorderThickness="1" CornerRadius="12" Margin="5,0,5,10">
+                                        <StackPanel>
+                                            <Grid Height="100">
+                                                <!-- 用 ImageBrush 而不是 Image：Border 的圆角能裁到画刷本身，
+                                                     直接放 Image 的话方角会盖在卡片圆角外面 -->
+                                                <Button BorderThickness="0" Padding="0"
+                                                        Cursor="Hand" Click="HistoryThumb_Click" Tag="{Binding}"
+                                                        ToolTip="点击查看大图">
+                                                    <Button.Background>
+                                                        <ImageBrush ImageSource="{Binding Thumbnail}" Stretch="UniformToFill"/>
+                                                    </Button.Background>
+                                                    <Button.Template>
+                                                        <ControlTemplate TargetType="Button">
+                                                            <Border Background="{TemplateBinding Background}"
+                                                                    CornerRadius="11,11,0,0"/>
+                                                        </ControlTemplate>
+                                                    </Button.Template>
+                                                </Button>
+                                                <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="6"
+                                                        Padding="6,2" CornerRadius="9" Background="#8C1A2233"
+                                                        IsHitTestVisible="False">
+                                                    <TextBlock Text="{Binding DisplayTime}" FontSize="11" Foreground="White"/>
+                                                </Border>
+                                            </Grid>
+                                            <Grid Margin="7,6">
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                                                    <Button Style="{StaticResource HistoryIconButton}" ToolTip="用作原图"
+                                                            Command="{Binding DataContext.UseHistoryAsSourceCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}">
+                                                        <Path Width="14" Height="14" Stretch="Uniform" Stroke="#4A5464" StrokeThickness="1.7"
+                                                              Data="M3 4.5h18v15H3zM3.5 16.5 8.5 11l4 3.5 3-2.5 5 4.5"/>
+                                                    </Button>
+                                                    <Button Style="{StaticResource HistoryIconButton}" Margin="4,0,0,0"
+                                                            ToolTip="添加为参考图"
+                                                            Command="{Binding DataContext.AddHistoryAsReferenceCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}">
+                                                        <Path Width="14" Height="14" Stretch="Uniform" Stroke="#4A5464" StrokeThickness="1.7"
+                                                              Data="M12 6.5v11M6.5 12h11M4.5 2.5h15a2 2 0 0 1 2 2v15a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2v-15a2 2 0 0 1 2-2Z"/>
+                                                    </Button>
+                                                </StackPanel>
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                    <Button Style="{StaticResource HistoryIconButton}" ToolTip="下载"
+                                                            Command="{Binding DataContext.DownloadHistoryCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}">
+                                                        <Path Width="14" Height="14" Stretch="Uniform" Stroke="#4A5464" StrokeThickness="1.7"
+                                                              Data="M12 4v11M7.5 10.5 12 15l4.5-4.5M4.5 19.5h15"/>
+                                                    </Button>
+                                                    <Button Style="{StaticResource HistoryIconButton}" Margin="4,0,0,0"
+                                                            ToolTip="删除记录"
+                                                            Command="{Binding DataContext.DeleteHistoryCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}">
+                                                        <Path Width="14" Height="14" Stretch="Uniform" Stroke="#4A5464" StrokeThickness="1.7"
+                                                              Data="M4.5 7h15M9.5 7V5.2A1.2 1.2 0 0 1 10.7 4h2.6a1.2 1.2 0 0 1 1.2 1.2V7M6.5 7l.8 12.1A1.5 1.5 0 0 0 8.8 20.5h6.4a1.5 1.5 0 0 0 1.5-1.4L17.5 7"/>
+                                                    </Button>
+                                                </StackPanel>
+                                            </Grid>
                                         </StackPanel>
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </ScrollViewer>
+
+                    <!-- 上限说明：固定贴在抽屉底部，不随列表滚动 -->
+                    <Border Grid.Row="2" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0"
+                            Padding="18,10">
+                        <StackPanel Orientation="Horizontal">
+                            <Path Width="13" Height="13" Stretch="Uniform" Stroke="#9AA6BA" StrokeThickness="1.7"
+                                  Data="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 11v5.5M12 7.6v.01"
+                                  VerticalAlignment="Top" Margin="0,1,0,0"/>
+                            <TextBlock Text="{Binding HistoryLimitHint}" FontSize="11.5"
+                                       Foreground="{StaticResource Text3Brush}" Margin="7,0,0,0"
+                                       TextWrapping="Wrap" LineHeight="16"/>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Grid.Row="1" Text="暂无历史记录&#x0a;生成完成后会自动保存在这里"
+                               FontSize="13" Foreground="{StaticResource Text3Brush}" TextAlignment="Center"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" LineHeight="22"
+                               Visibility="{Binding HistoryEmptyVisibility}"/>
                 </Grid>
-            </Grid>
+            </Border>
 
-            <!-- ── RIGHT: Settings panel ──────────────────────────────── -->
-            <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" Padding="0,0,4,0">
+            <!-- ─────────── 设置弹层（可见性只从 SettingsPanelVisibility 派生）─────────── -->
+            <Border Grid.Column="0" Grid.ColumnSpan="2" HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom" Margin="0,0,94,14" MaxWidth="318"
+                    Background="White" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                    CornerRadius="12" Padding="16" Panel.ZIndex="30"
+                    Visibility="{Binding SettingsPanelVisibility}"
+                    MouseLeftButtonUp="FloatPanel_MouseLeftButtonUp">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="36" ShadowDepth="6" Opacity="0.18" Color="#101828"/>
+                </Border.Effect>
                 <StackPanel>
+                    <TextBlock Text="设置" FontSize="14" FontWeight="SemiBold" Foreground="#141A26"
+                               Margin="0,0,0,12"/>
 
-                    <!-- Mode toggle -->
-                    <Grid Margin="0,0,0,10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/>
-                        </Grid.ColumnDefinitions>
-                        <Button Grid.Column="0" Content="{Binding [Single], Source={StaticResource L}}" Click="SingleModeBtn_Click"
-                                FontSize="12" Padding="0,8" BorderThickness="0" Cursor="Hand">
-                            <Button.Style>
-                                <Style TargetType="Button">
-                                    <Setter Property="Background" Value="#E0E0E0"/>
-                                    <Setter Property="Foreground" Value="#555"/>
-                                    <Setter Property="Template" Value="{StaticResource BtnTpl}"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsSingleMode}" Value="True">
-                                            <Setter Property="Background" Value="#4A90D9"/>
-                                            <Setter Property="Foreground" Value="White"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Button.Style>
-                        </Button>
-                        <Button Grid.Column="2" Content="{Binding [Batch], Source={StaticResource L}}" Click="BatchModeBtn_Click"
-                                FontSize="12" Padding="0,8" BorderThickness="0" Cursor="Hand">
-                            <Button.Style>
-                                <Style TargetType="Button">
-                                    <Setter Property="Background" Value="#E0E0E0"/>
-                                    <Setter Property="Foreground" Value="#555"/>
-                                    <Setter Property="Template" Value="{StaticResource BtnTpl}"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsBatchMode}" Value="True">
-                                            <Setter Property="Background" Value="#7B5EA7"/>
-                                            <Setter Property="Foreground" Value="White"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Button.Style>
-                        </Button>
-                    </Grid>
+                    <TextBlock Text="中转站" Style="{StaticResource PopSectionTitle}"/>
+                    <TextBlock Text="中转站地址" Style="{StaticResource PopFieldLabel}"/>
+                    <TextBox x:Name="BaseUrlBox" Style="{StaticResource PopInput}" Margin="0,0,0,10"
+                             Text="{Binding Settings.BaseUrl, UpdateSourceTrigger=LostFocus}"
+                             LostKeyboardFocus="BaseUrl_LostKeyboardFocus"
+                             ToolTip="{Binding BaseUrlPlaceholder}"/>
+                    <TextBlock Text="API Key" Style="{StaticResource PopFieldLabel}"/>
+                    <!-- API Key 始终以密码形式显示，不提供查看明文的入口 -->
+                    <PasswordBox x:Name="ApiKeySecretBox" Height="32" FontSize="13" Margin="0,0,0,2"
+                                 Padding="10,0" VerticalContentAlignment="Center"
+                                 Background="White" BorderBrush="{StaticResource Line2Brush}"
+                                 BorderThickness="1"
+                                 PasswordChanged="ApiKeySecretBox_PasswordChanged"
+                                 ToolTip="{Binding ApiKeyWatermark}"/>
 
-                    <!-- Header + gear -->
-                    <Grid>
+                    <Border Style="{StaticResource PopSeparator}"/>
+
+                    <TextBlock Text="模型" Style="{StaticResource PopSectionTitle}"/>
+                    <TextBlock Text="快速模型" Style="{StaticResource PopFieldLabel}"/>
+                    <TextBox Style="{StaticResource PopInput}" Margin="0,0,0,10"
+                             Text="{Binding PendingFastModel, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="{Binding FastModelWatermark}"/>
+                    <TextBlock Text="标准模型" Style="{StaticResource PopFieldLabel}"/>
+                    <TextBox Style="{StaticResource PopInput}" Margin="0,0,0,10"
+                             Text="{Binding PendingStdModel, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="{Binding StdModelWatermark}"/>
+                    <Button Style="{StaticResource PrimaryButton}" Height="28" Tag="14" Padding="10,0"
+                            FontSize="12.5" HorizontalAlignment="Stretch" Margin="0,2,0,10"
+                            Content="保存模型设置" Command="{Binding SaveModelSettingsCommand}"/>
+
+                    <Border Style="{StaticResource PopSeparator}"/>
+
+                    <Grid Margin="0,2">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="{Binding [SETTINGS], Source={StaticResource L}}" Style="{StaticResource SectionHeader}" Margin="0,0,0,6"/>
-                        <Button Grid.Column="1" x:Name="SettingsButton" Click="SettingsButton_Click"
-                                Background="Transparent" BorderThickness="0" Cursor="Hand"
-                                ToolTip="API Settings" VerticalAlignment="Center">
-                            <Button.Template>
-                                <ControlTemplate TargetType="Button">
-                                    <Border Background="{TemplateBinding Background}" Padding="4">
-                                        <Path Data="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z"
-                                              Fill="#666" Width="20" Height="20" Stretch="Uniform"/>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="自动保存生成记录" FontSize="13" Foreground="#3A4354"/>
+                            <TextBlock Text="生成完成后写入历史记录" FontSize="11.5"
+                                       Foreground="{StaticResource Text3Brush}" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ToggleButton Grid.Column="1" IsChecked="{Binding AutoSaveHistory, Mode=TwoWay}"
+                                      VerticalAlignment="Center" Cursor="Hand"
+                                      ToolTip="生成完成后写入历史记录">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border x:Name="Track" Width="38" Height="22" CornerRadius="999" Background="#DFE5EE">
+                                        <Ellipse x:Name="Knob" Width="18" Height="18" Fill="White"
+                                                 HorizontalAlignment="Left" Margin="2,0,0,0"/>
                                     </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="Track" Property="Background" Value="{StaticResource AccentBrush}"/>
+                                            <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/>
+                                            <Setter TargetName="Knob" Property="Margin" Value="0,0,2,0"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
                                 </ControlTemplate>
-                            </Button.Template>
-                        </Button>
+                            </ToggleButton.Template>
+                        </ToggleButton>
                     </Grid>
 
-                    <!-- ── SINGLE: Capture ── -->
-                    <StackPanel Visibility="{Binding IsSingleMode, Converter={StaticResource BoolToVis}}">
-                        <TextBlock Text="{Binding [1. CAPTURE], Source={StaticResource L}}" Style="{StaticResource SectionHeader}"/>
-                        <Button Content="{Binding [Capture Active View], Source={StaticResource L}}" Command="{Binding CaptureCommand}"
-                                Style="{StaticResource BtnPrimary}" Margin="0,0,0,4"/>
-                        <Grid Margin="0,0,0,4">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/>
-                            </Grid.ColumnDefinitions>
-                            <Button Grid.Column="0" Content="上传本地图片" Command="{Binding UploadImageCommand}"
-                                    Style="{StaticResource BtnSecondary}"/>
-                            <Button Grid.Column="2" Content="参考图库" Command="{Binding OpenReferenceLibraryCommand}"
-                                    Style="{StaticResource BtnSecondary}"/>
-                        </Grid>
-                        <Grid Margin="0,0,0,4">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/>
-                            </Grid.ColumnDefinitions>
-                            <Button Grid.Column="0" Content="添加多图参考" Command="{Binding AddReferenceImagesCommand}"
-                                    Style="{StaticResource BtnSecondary}"/>
-                            <Button Grid.Column="2" Content="从图库添加" Command="{Binding AddReferenceImagesFromLibraryCommand}"
-                                    Style="{StaticResource BtnSecondary}"/>
-                            <Button Grid.Column="4" Content="清空参考图" Command="{Binding ClearActiveReferencesCommand}"
-                                    Style="{StaticResource BtnSecondary}"/>
-                        </Grid>
-                        <TextBlock Text="{Binding ActiveReferenceSummary}" FontSize="11" Foreground="#777"
-                                   Margin="0,0,0,6"/>
-                        <Grid x:Name="MaskEntryPanel" Margin="0,0,0,4">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition/>
-                            </Grid.ColumnDefinitions>
-                            <Button Content="遮罩修改" Click="StartMaskEdit_Click"
-                                    IsEnabled="{Binding CanUseMaskEdit}"
-                                    Style="{StaticResource BtnPrimary}"/>
-                        </Grid>
-                        <StackPanel Visibility="{Binding IsMaskEditing, Converter={StaticResource BoolToVis}}" Margin="0,0,0,4">
-                            <TextBlock Text="请涂抹需要修改的区域，并输入希望如何修改"
-                                       FontSize="11" Foreground="#777" Margin="0,0,0,4"/>
-                            <TextBox Text="{Binding MaskEditPrompt, UpdateSourceTrigger=PropertyChanged}"
-                                     Padding="8,6" FontSize="12" BorderBrush="#D7B56D" BorderThickness="1"
-                                     TextWrapping="Wrap" AcceptsReturn="True" Height="52"
-                                     VerticalScrollBarVisibility="Auto" Margin="0,0,0,6"/>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="38"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="画笔" FontSize="11" Foreground="#777"
-                                           VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                <Slider x:Name="MaskBrushSizeSlider"
-                                        Grid.Column="1"
-                                        Minimum="2" Maximum="32" Value="8"
-                                        TickFrequency="2" IsSnapToTickEnabled="True"
-                                        ValueChanged="MaskBrushSizeSlider_ValueChanged"/>
-                                <TextBlock Grid.Column="2"
-                                           Text="{Binding Value, ElementName=MaskBrushSizeSlider, StringFormat={}{0:F0}}"
-                                           FontSize="11" Foreground="#777"
-                                           HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                            </Grid>
-                        </StackPanel>
-                        <Grid x:Name="MaskEditPanel" Margin="0,0,0,4" Visibility="Collapsed">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/>
-                            </Grid.ColumnDefinitions>
-                            <Button Grid.Column="0" Content="重置" Click="ResetMask_Click"
-                                    Style="{StaticResource BtnSecondary}"/>
-                            <Button Grid.Column="2" Content="取消遮罩" Click="CancelMaskEdit_Click"
-                                    Style="{StaticResource BtnSecondary}"/>
-                            <Button Grid.Column="4" Content="提交修改" Click="SubmitMaskEdit_Click"
-                                    Style="{StaticResource BtnPrimary}"/>
-                        </Grid>
-                    </StackPanel>
+                    <Border Style="{StaticResource PopSeparator}"/>
 
-                    <!-- ── BATCH: View controls ── -->
-                    <StackPanel Visibility="{Binding IsBatchMode, Converter={StaticResource BoolToVis}}">
-                        <TextBlock Text="{Binding [1. BATCH VIEWS], Source={StaticResource L}}" Style="{StaticResource SectionHeader}"/>
-                        <Button Content="{Binding [Load &amp; Capture Named Views], Source={StaticResource L}}" Command="{Binding BatchVM.LoadAndCaptureCommand}"
-                                Style="{StaticResource BtnPrimary}" Margin="0,0,0,4"/>
-                        <Grid Margin="0,0,0,4">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/>
-                            </Grid.ColumnDefinitions>
-                            <Button Grid.Column="0" Content="{Binding [Select All], Source={StaticResource L}}" Command="{Binding BatchVM.SelectAllCommand}"
-                                    Style="{StaticResource BtnSecondary}"/>
-                            <Button Grid.Column="2" Content="{Binding [Deselect All], Source={StaticResource L}}" Command="{Binding BatchVM.DeselectAllCommand}"
-                                    Style="{StaticResource BtnSecondary}"/>
-                        </Grid>
-                        <ProgressBar IsIndeterminate="True" Height="2" Margin="0,4,0,2"
-                                     Visibility="{Binding BatchVM.IsRunning, Converter={StaticResource BoolToVis}}"/>
-                        <TextBlock FontSize="11" Foreground="#555" TextWrapping="Wrap" Margin="0,2,0,0"
-                                   Text="{Binding BatchVM.StatusMessage}"/>
-                        <TextBlock FontSize="11" Foreground="#4A90D9" Margin="0,1,0,0"
-                                   Visibility="{Binding BatchVM.IsRunning, Converter={StaticResource BoolToVis}}">
-                            <Run Text="{Binding BatchVM.DoneCount, Mode=OneWay}"/>
-                            <Run Text=" / "/>
-                            <Run Text="{Binding BatchVM.TotalCount, Mode=OneWay}"/>
-                            <Run Text="{Binding [completed suffix], Source={StaticResource L}, Mode=OneWay}"/>
-                        </TextBlock>
-
-                        <!-- Reference image drop zone -->
-                        <TextBlock Text="{Binding [2. STYLE REFERENCE], Source={StaticResource L}}" Style="{StaticResource SectionHeader}"/>
-                        <Border x:Name="ReferenceDropZone"
-                                Height="90" Background="#F7F7F7"
-                                BorderBrush="#CCCCCC" BorderThickness="1" CornerRadius="4"
-                                AllowDrop="True"
-                                DragEnter="ReferenceZone_DragEnter"
-                                Drop="ReferenceZone_Drop"
-                                MouseLeftButtonUp="ReferenceZone_Click"
-                                Cursor="Hand">
-                            <Grid>
-                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
-                                            Visibility="{Binding BatchVM.HasReferenceImage, Converter={StaticResource InvBoolToVis}}">
-                                    <TextBlock Text="{Binding [Reference image hint], Source={StaticResource L}}" FontSize="11" Foreground="#BBB" HorizontalAlignment="Center"/>
-                                    <TextBlock Text="{Binding [Reference image sub], Source={StaticResource L}}" FontSize="10" Foreground="#CCC" HorizontalAlignment="Center" Margin="0,3,0,0"/>
-                                </StackPanel>
-                                <Image Source="{Binding BatchVM.ReferenceImage}" Stretch="Uniform" Margin="4"
-                                       Visibility="{Binding BatchVM.HasReferenceImage, Converter={StaticResource BoolToVis}}"
-                                       Tag="{Binding BatchVM.ReferenceImage}"
-                                       MouseLeftButtonUp="AnyImage_PreviewClick"/>
-                                <Button Content="×" HorizontalAlignment="Right" VerticalAlignment="Top"
-                                        Margin="0,3,3,0" Width="20" Height="20" FontSize="12"
-                                        Background="#E05555" Foreground="White" BorderThickness="0"
-                                        Cursor="Hand"
-                                        Click="ClearReference_Click"
-                                        Visibility="{Binding BatchVM.HasReferenceImage, Converter={StaticResource BoolToVis}}">
-                                    <Button.Template>
-                                        <ControlTemplate TargetType="Button">
-                                            <Border Background="{TemplateBinding Background}" CornerRadius="2">
-                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                            </Border>
-                                        </ControlTemplate>
-                                    </Button.Template>
-                                </Button>
-                            </Grid>
-                        </Border>
-                    </StackPanel>
-
-                    <!-- ── Provider info ── -->
-                    <TextBlock Text="{Binding [2. SERVICE PROVIDER], Source={StaticResource L}}" Style="{StaticResource SectionHeader}"/>
-                    <Border Background="#E8F4FD" BorderBrush="#B8D4E8" BorderThickness="1"
-                            CornerRadius="4" Padding="10" Margin="0,0,0,8">
-                        <StackPanel>
-                            <TextBlock FontSize="12" Foreground="#333">
-                                <Run Text="{Binding [Provider:], Source={StaticResource L}, Mode=OneWay}"/>
-                                <Run Text="{Binding Settings.SelectedProviderDisplayName, Mode=OneWay}" FontWeight="SemiBold"/>
-                            </TextBlock>
-                            <TextBlock Text="{Binding [Click gear icon above to configure API settings], Source={StaticResource L}}"
-                                       FontSize="10" Foreground="#888" FontStyle="Italic" Margin="0,4,0,0"/>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- ── Generation Parameters (shared) ── -->
-                    <TextBlock Text="{Binding [3. GENERATION PARAMETERS], Source={StaticResource L}}" Style="{StaticResource SectionHeader}"/>
-
-                    <TextBlock Text="{Binding [Model], Source={StaticResource L}}" Style="{StaticResource Label}"/>
-                    <ComboBox ItemsSource="{Binding Settings.ModelList}"
-                              SelectedItem="{Binding Settings.SelectedModelItem}"
-                              DisplayMemberPath="DisplayName"
-                              Padding="8,6" FontSize="12" Margin="0,0,0,8"/>
-
-                    <TextBlock Text="提示词库" Style="{StaticResource Label}"/>
-                    <Grid Margin="0,0,0,8">
-                        <!-- Template selector row -->
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="4"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <ComboBox Grid.Column="0"
-                                      ItemsSource="{Binding Settings.PromptTemplates}"
-                                      SelectedItem="{Binding Settings.SelectedPromptTemplate}"
-                                      DisplayMemberPath="Name"
-                                      IsEnabled="{Binding IsMainPromptEnabled}"
-                                      Padding="8,6" FontSize="12"
-                                      x:Name="PromptTemplateCombo"/>
-                            <!-- Delete selected template -->
-                            <Button Grid.Column="2" Content="删除"
-                                    Command="{Binding DeletePromptTemplateCommand}"
-                                    CommandParameter="{Binding SelectedItem, ElementName=PromptTemplateCombo}"
-                                    IsEnabled="{Binding IsMainPromptEnabled}"
-                                    Background="#E05555" Foreground="White" BorderThickness="0"
-                                    Padding="10,6" FontSize="12" Cursor="Hand">
-                                <Button.Template>
-                                    <ControlTemplate TargetType="Button">
-                                        <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                        </Border>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="0.85"/></Trigger>
-                                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Button.Template>
-                            </Button>
-                        </Grid>
-                    </Grid>
-
-                    <TextBlock Text="{Binding [Prompt], Source={StaticResource L}}" Style="{StaticResource Label}"/>
-                    <TextBox Text="{Binding Settings.Prompt, UpdateSourceTrigger=PropertyChanged}"
-                             IsEnabled="{Binding IsMainPromptEnabled}"
-                             Padding="8,6" FontSize="12" BorderBrush="#CCC" BorderThickness="1"
-                             TextWrapping="Wrap" AcceptsReturn="True" Height="60"
-                             VerticalScrollBarVisibility="Auto"/>
-                    <Button Content="保存当前提示词为模版…"
-                            Command="{Binding SavePromptTemplateCommand}"
-                            IsEnabled="{Binding IsMainPromptEnabled}"
-                            Background="#7B5EA7" Foreground="White" BorderThickness="0"
-                            Padding="0,7" FontSize="12" Cursor="Hand" Margin="0,4,0,8">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                                <ControlTemplate.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="0.85"/></Trigger>
-                                    <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
-                                </ControlTemplate.Triggers>
-                            </ControlTemplate>
-                        </Button.Template>
-                    </Button>
-
-                    <StackPanel Visibility="Collapsed">
-                        <TextBlock Text="请涂抹需要修改的区域，并输入希望如何修改"
-                                   FontSize="11" Foreground="#777" Margin="0,0,0,4"/>
-                        <TextBox Text="{Binding MaskEditPrompt, UpdateSourceTrigger=PropertyChanged}"
-                                 Padding="8,6" FontSize="12" BorderBrush="#D7B56D" BorderThickness="1"
-                                 TextWrapping="Wrap" AcceptsReturn="True" Height="52"
-                                 VerticalScrollBarVisibility="Auto" Margin="0,0,0,8"/>
-                    </StackPanel>
-
-                    <TextBox Text="{Binding Settings.SystemPrompt, UpdateSourceTrigger=PropertyChanged}"
-                             Visibility="Collapsed"/>
-
-                    <TextBlock Text="{Binding [Aspect Ratio], Source={StaticResource L}}" Style="{StaticResource Label}"/>
-                    <ComboBox ItemsSource="{Binding Settings.AspectRatios}"
-                              SelectedItem="{Binding Settings.SelectedAspectRatio}"
-                              DisplayMemberPath="Name"
-                              Padding="8,6" FontSize="12" Margin="0,0,0,8"/>
-
-                    <TextBlock Text="{Binding [Image Size], Source={StaticResource L}}" Style="{StaticResource Label}"/>
-                    <ComboBox ItemsSource="{Binding Settings.ImageSizes}"
-                              SelectedItem="{Binding Settings.SelectedImageSize}"
-                              IsEnabled="{Binding Settings.IsImageSizeEnabled}"
-                              Padding="8,6" FontSize="12" Margin="0,0,0,8"/>
-
-                    <TextBlock Text="源图速度" Style="{StaticResource Label}"/>
-                    <ComboBox ItemsSource="{Binding Settings.SourceImageModes}"
-                              SelectedItem="{Binding Settings.SelectedSourceImageModeItem}"
-                              DisplayMemberPath="DisplayName"
-                              IsEnabled="{Binding Settings.IsSourceImageModeEnabled}"
-                              Padding="8,6" FontSize="12" Margin="0,0,0,8"/>
-
-                    <!-- ── Action buttons ── -->
-
-                    <!-- Single: Generate -->
-                    <Button Content="{Binding [Generate Image], Source={StaticResource L}}" Command="{Binding GenerateCommand}"
-                            IsEnabled="{Binding IsMainPromptEnabled}"
-                            Style="{StaticResource BtnPrimary}" Margin="0,12,0,8"
-                            Visibility="{Binding IsSingleMode, Converter={StaticResource BoolToVis}}"/>
-
-                    <!-- Batch: Render + Cancel -->
-                    <StackPanel Visibility="{Binding IsBatchMode, Converter={StaticResource BoolToVis}}" Margin="0,12,0,0">
-                        <Button Content="{Binding [Start Batch Render], Source={StaticResource L}}" Command="{Binding BatchVM.RenderSelectedCommand}"
-                                Style="{StaticResource BtnPurple}" Margin="0,0,0,6"/>
-                        <Button Content="{Binding [Cancel Render], Source={StaticResource L}}" Command="{Binding BatchVM.CancelCommand}"
-                                Style="{StaticResource BtnSecondary}" Margin="0,0,0,8"/>
-                    </StackPanel>
-
-                    <!-- Single: Save + Use as Source + Clear -->
-                    <StackPanel Visibility="{Binding IsSingleMode, Converter={StaticResource BoolToVis}}">
-                        <!-- Download + Save to Ref Library -->
-                        <Grid Margin="0,0,0,8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition/>
-                            </Grid.ColumnDefinitions>
-                            <Button Grid.Column="0" Content="下载图片" Command="{Binding SaveResultCommand}"
-                                    Style="{StaticResource BtnLight}"/>
-                            <Button Grid.Column="2" Content="存入参考图" Command="{Binding SaveToReferenceLibraryCommand}"
-                                    Style="{StaticResource BtnGreen}"/>
-                        </Grid>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition/>
-                            </Grid.ColumnDefinitions>
-                            <Button Grid.Column="0" Content="{Binding [Use as Source], Source={StaticResource L}}" Command="{Binding UseResultAsSourceCommand}"
-                                    Style="{StaticResource BtnSecondary}"/>
-                            <Button Grid.Column="2" Content="{Binding [Clear All], Source={StaticResource L}}" Command="{Binding ClearCommand}"
-                                    Style="{StaticResource BtnSecondary}"/>
-                        </Grid>
-                    </StackPanel>
-
-                    <!-- Batch: Save All -->
-                    <Button Content="{Binding [Save All Results], Source={StaticResource L}}" Command="{Binding BatchVM.SaveAllCommand}"
-                            Style="{StaticResource BtnSecondary}" Margin="0,0,0,8"
-                            Visibility="{Binding IsBatchMode, Converter={StaticResource BoolToVis}}"/>
-
+                    <Button Style="{StaticResource SmallButton}" HorizontalAlignment="Stretch" Height="28"
+                            Content="清除原图与生成结果" Click="ResetSession_Click"/>
                 </StackPanel>
-            </ScrollViewer>
+            </Border>
         </Grid>
 
-        <!-- ══════════════════════════ STATUS BAR ════════════════════════ -->
-        <Border Grid.Row="1" Background="#EEE" Padding="12,8" Margin="0,10,0,0" CornerRadius="4">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center"
-                           Foreground="#555" FontSize="12"
-                           Visibility="{Binding IsSingleMode, Converter={StaticResource BoolToVis}}"/>
-                <TextBlock Text="{Binding BatchVM.StatusMessage}" VerticalAlignment="Center"
-                           Foreground="#555" FontSize="12"
-                           Visibility="{Binding IsBatchMode, Converter={StaticResource BoolToVis}}"/>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding GenerationProgressText}" FontSize="11" Foreground="#666"
-                               Margin="0,0,8,0"
-                               Visibility="{Binding IsGenerating, Converter={StaticResource BoolToVis}}"/>
-                    <ProgressBar Width="120" Height="5" Minimum="0" Maximum="100"
-                                 Value="{Binding GenerationProgress}"
-                                 Visibility="{Binding IsGenerating, Converter={StaticResource BoolToVis}}"/>
-                    <ProgressBar IsIndeterminate="True" Width="100" Height="4"
-                                 Visibility="{Binding BatchVM.IsRunning, Converter={StaticResource BoolToVis}}"/>
+        <!-- ═══════════════════════ 提示（toast）═══════════════════════ -->
+        <ItemsControl Grid.Row="0" Grid.RowSpan="2" ItemsSource="{Binding Toasts}"
+                      HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                      Margin="0,0,0,34" Panel.ZIndex="200" IsHitTestVisible="False">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Border Background="#ED171D29" CornerRadius="999" Padding="16,9" Margin="0,0,0,8">
+                        <TextBlock Text="{Binding}" Foreground="White" FontSize="13"/>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <!-- ═══════════════════════ 大图预览（灯箱）═══════════════════════ -->
+        <Grid x:Name="LightboxOverlay" Grid.Row="0" Grid.RowSpan="2" Panel.ZIndex="100"
+              Background="#CC0B101A" Visibility="Collapsed"
+              MouseLeftButtonUp="LightboxOverlay_Click">
+            <Grid Margin="40" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Image x:Name="LightboxImage" Grid.Row="0" Stretch="Uniform"
+                       MaxWidth="1180" MaxHeight="620" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0">
+                    <TextBlock x:Name="LightboxTitle" Foreground="#E8ECF3" FontSize="13.5"
+                               VerticalAlignment="Center"/>
+                    <Button x:Name="LightboxDownloadButton" Content="下载" Margin="14,0,0,0"
+                            Style="{StaticResource LightboxButton}" Click="LightboxDownload_Click"/>
+                    <Button Content="关闭" Margin="10,0,0,0" Style="{StaticResource LightboxButton}"
+                            Click="LightboxClose_Click"/>
                 </StackPanel>
             </Grid>
-        </Border>
-
-        <!-- ══════════════════════ IMAGE PREVIEW OVERLAY ═════════════════ -->
-        <Grid x:Name="PreviewOverlay"
-              Visibility="Collapsed"
-              Grid.RowSpan="2"
-              Background="#D4000000"
-              Cursor="Hand"
-              MouseLeftButtonUp="PreviewOverlay_Click"
-              Panel.ZIndex="99">
-            <Image x:Name="PreviewImage" Stretch="Uniform" Margin="50"/>
-            <TextBlock Text="点击任意处关闭" Foreground="#80FFFFFF" FontSize="11"
-                       HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,24"/>
         </Grid>
-
     </Grid>
 </Window>

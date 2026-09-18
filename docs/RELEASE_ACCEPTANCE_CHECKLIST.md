@@ -19,7 +19,9 @@ bin\Release\net7.0-windows\
 - [ ] Run `AIRender`; confirm the main window opens.
 - [ ] Open settings and configure APIYI:
   - Base URL: `https://api.apiyi.com`
-  - Model: `gpt-image-2`
+  - Fast model: `gpt-image-2.5-all`
+  - Standard model: `gpt-image-2.5-vip`
+  - Mask edits internally use `gpt-image-2.5-sunburst` (fixed, not configurable)
   - API key: release-test key
 - [ ] Capture the active viewport and generate one image.
 - [ ] Upload a local image as the source and generate one image.
@@ -29,22 +31,28 @@ Pass criteria:
 
 - [ ] Normal generation succeeds.
 - [ ] Settings persist after Rhino restart.
-- [ ] Images are saved under `%APPDATA%\AIRenderer\generated`.
+- [ ] Images are saved under `%APPDATA%\AIRenderer\history`（单目录方案；`index.json` 只有路径+时间，最多 30 条）。
 - [ ] No Windows crash dialog appears for `TuoJieSidecar.exe`.
 
 ## 3. APIYI Capability Checks
 
+> **已确认的产品模型决策（2026-09-18）**：快速出图固定默认
+> `gpt-image-2.5-all`，标准模式固定默认 `gpt-image-2.5-vip`，蒙版固定使用
+> `gpt-image-2.5-sunburst`。第三方不需要再次询问模型名，也不要替换为旧的
+> `image-2`；本节只验证真实接口调用和客户 Key 的模型权限。
+
 Normal generation:
 
-- [ ] Confirm `gpt-image-2` generation succeeds with APIYI.
-- [ ] Confirm custom APIYI providers using `ApiFormat=openai` still generate through the generations route.
+- [ ] Confirm `gpt-image-2.5-all`（快速）和 `gpt-image-2.5-vip`（标准）均能通过 API易成功生成。
+- [ ] If testing a custom non-APIYI OpenAI-compatible host, confirm normal requests use
+      `/v1/images/edits`; API易 hosts use `/v1/images/generations` regardless of the
+      legacy `ApiFormat` metadata.
 - [ ] Generate with a viewport around `1400x840` or `1920x1080`; confirm no `Pipe is broken`.
 
-Source image speed mode:
+Render modes:
 
-- [ ] Test `speed`; must pass.
-- [ ] Test `balanced`; must pass.
-- [ ] Test `quality`; observe only. It may be slow, but the UI and Sidecar must not crash.
+- [ ] Test **快速出图**; it must generate successfully and omit the standard `size` parameter.
+- [ ] Test **标准模式**; it must generate successfully with the selected `size` parameter.
 
 Mask edit:
 
@@ -56,7 +64,7 @@ Mask edit:
 
 Pass criteria:
 
-- [ ] Mask edit button is enabled when the provider/model supports it.
+- [ ] Mask edit button is enabled in standard mode and disabled in fast mode.
 - [ ] Brush size is adjustable.
 - [ ] Result is visibly related to the painted region.
 - [ ] Failures show API/Sidecar error detail instead of only a generic failure.
@@ -64,30 +72,32 @@ Pass criteria:
 
 ## 4. Multi-Image Reference Checks
 
+> 参考图入口只有两个：**参考图像（可选）** 卡片里的 `添加参考图`（本地文件，最多 3 张），
+> 以及 **历史记录抽屉** 里的 `添加为参考图`。参考图库弹窗（`ReferenceLibraryDialog`）
+> 主界面已不再挂入口，本节不覆盖。
+
 Local references:
 
 - [ ] Capture or upload a source image.
-- [ ] Click `添加多图参考`.
-- [ ] Select two local reference images.
-- [ ] Confirm thumbnails appear below the source preview as `图2` and `图3`.
-- [ ] Delete one thumbnail with `X`; confirm numbering updates.
-- [ ] Click clear references; confirm thumbnails disappear.
+- [ ] Click `添加参考图` and select two local images.
+- [ ] Confirm thumbnails appear in the `参考图像（可选）` card in the same order they were selected.
+- [ ] Confirm the count is capped at 3 (the `添加参考图` button disappears at 3).
+- [ ] Delete one thumbnail with its `×`; confirm the remaining reference stays usable and order is preserved.
+- [ ] Click a thumbnail; confirm the lightbox opens.
 
-Reference library:
+From the history drawer:
 
-- [ ] Save one generated result into the reference library.
-- [ ] Click `从图库添加`.
-- [ ] Select multiple reference-library images.
-- [ ] Click `添加选中`.
-- [ ] Confirm selected images appear below the source preview.
-- [ ] Delete the original library image.
-- [ ] Generate using the already-added active reference.
+- [ ] Open `历史记录`, click `添加为参考图` on one entry.
+- [ ] Confirm it appears as the next `图N` in the reference card.
+- [ ] Delete the original history entry; confirm the reference thumbnail still renders
+      (references are copies under `active-references`, not links to history files).
+- [ ] Generate using the already-added reference.
 
 Pass criteria:
 
 - [ ] Source image is always `图1`.
 - [ ] References are sent in displayed order as `图2..N`.
-- [ ] Deleting a library image does not break active references already added to the current request.
+- [ ] Deleting a history item does not break active references already added to the current request.
 - [ ] This prompt style works:
 
 ```text
@@ -138,12 +148,32 @@ Pass criteria:
 |---|---|---|
 | Release package | Dev machine | `Preflight passed.` |
 | Rhino 8 plugin load | Dev Rhino 8 | `AIRender` opens |
-| Normal generation | APIYI `gpt-image-2` | Image generated and saved |
+| Normal generation | APIYI confirmed model names | Image generated and saved |
 | Large screenshot | 1400x840+ | No `Pipe is broken` |
 | Restart persistence | Rhino restart | Settings retained, generation succeeds |
-| Speed mode | `speed`, `balanced` | Image generated |
+| Render modes | 快速出图、标准模式 | Both generate; fast omits `size`, standard sends `size` |
 | Mask edit | Local painted region | Result relates to mask |
-| Local multi-reference | 2 references | `图2/图3` shown and used |
-| Library multi-reference | Library multi-select | Add, delete, generate normally |
+| Local multi-reference | 2 references | 2 references shown in order and used |
+| History multi-reference | History drawer | Add, delete, generate normally |
 | Rhino blocked network | Windows Firewall | Sidecar can still generate |
 | Customer diagnose | Extracted package | `Issues: 0` |
+
+## 7. Customer Failure Collection
+
+If the customer reports failure after the package is sent, ask for:
+
+```text
+diagnose.bat full output
+%APPDATA%\AIRenderer\settings.json
+%APPDATA%\AIRenderer\logs\sidecar_client_*.log
+%APPDATA%\AIRenderer\logs\sidecar_*.log
+%APPDATA%\AIRenderer\debug\mask_*.png
+```
+
+Common customer-only causes:
+
+- Antivirus quarantines `TuoJieSidecar.exe`.
+- Company firewall blocks unknown executables, not only `Rhino.exe`.
+- Proxy or SSL inspection rewrites API responses.
+- Plugin folder is read-only or files were copied incompletely.
+- API key has no access to the selected model.

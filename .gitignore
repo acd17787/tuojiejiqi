@@ -1,4 +1,5 @@
 # Build results
+.worktrees/
 bin/
 obj/
 [Dd]ebug/
@@ -32,3 +33,15 @@ Thumbs.db
 # Tool-specific configs (not shared)
 .claude/
 .vscode/
+
+# local .NET SDK + NuGet cache (macOS-side build verification only)
+.tools/
+
+# win-verify 运行产物（mock 日志、探针构建输出）
+tools/win-verify/*.jsonl
+tools/win-verify/*.log
+tools/win-verify/console.txt
+tools/win-verify/mock.out.txt
+tools/win-verify/mock.err.txt
+tools/win-verify/ApiProbe/bin/
+tools/win-verify/ApiProbe/obj/

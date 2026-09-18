@@ -31,6 +31,26 @@
     <PackageReference Include="System.Net.Http" Version="4.3.4" />
   </ItemGroup>
   
+  <!-- 从 macOS 用 tar/zip 复制过来的仓库会带 AppleDouble 伴随文件（._Foo.xaml / ._Foo.cs），
+       WPF 的 XAML 编译器与 C# 编译器会把它们当真实源文件而报 MC3000 / CS 错误，这里统一排除。
+       直接在本仓库构建时这些文件不存在，加了也无副作用。 -->
+  <ItemGroup>
+    <Page Remove="**/._*" />
+    <ApplicationDefinition Remove="**/._*" />
+    <Compile Remove="**/._*" />
+    <EmbeddedResource Remove="**/._*" />
+    <None Remove="**/._*" />
+  </ItemGroup>
+
+  <!-- tools/ 下是本仓库自带的验证脚本与探针工程（含其 obj 生成文件），不参与主工程编译。
+       否则主工程的 **/*.cs 会把 ApiProbe/obj/**/AssemblyInfo.cs 一起编进来，导致 CS0579 特性重复。 -->
+  <ItemGroup>
+    <Compile Remove="tools\**" />
+    <EmbeddedResource Remove="tools\**" />
+    <Page Remove="tools\**" />
+    <None Remove="tools\**" />
+  </ItemGroup>
+
   <!-- Exclude Sidecar subdirectory from main project compilation -->
   <ItemGroup>
     <Compile Remove="Sidecar\**" />
@@ -50,8 +70,13 @@
     <PropertyGroup>
       <SidecarDir>$(MSBuildProjectDirectory)\Sidecar\bin\$(Configuration)\$(TargetFramework)</SidecarDir>
       <Sidecar48Dir>$(MSBuildProjectDirectory)\Sidecar\bin\$(Configuration)\net48</Sidecar48Dir>
+      <!-- net7 Sidecar 的 win-x64 apphost：由 `dotnet publish -r win-x64` 生成。
+           macOS/Linux 上 `dotnet build` 不会产 apphost，所以这里优先取 publish 输出，
+           publish 目录不存在时仍然保留 net48 兜底（SidecarClient 有三级回退）。 -->
+      <SidecarWinX64PublishDir>$(MSBuildProjectDirectory)\Sidecar\bin\$(Configuration)\net7.0-windows\win-x64\publish</SidecarWinX64PublishDir>
     </PropertyGroup>
     <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.exe" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.exe')" />
+    <Copy SourceFiles="$(SidecarWinX64PublishDir)\TuoJieSidecar.exe" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarWinX64PublishDir)\TuoJieSidecar.exe')" />
     <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.dll" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.dll')" />
     <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.pdb" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.pdb')" />
     <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.deps.json" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.deps.json')" />

@@ -108,7 +108,7 @@
                     <!-- Actions -->
                     <TextBlock Text="ACTIONS" Style="{StaticResource SectionTitle}"/>
 
-                    <Button Content="加载命名视图" Command="{Binding LoadViewsCommand}"
+                    <Button Content="加载命名视图" Command="{Binding LoadAndCaptureCommand}"
                             Background="#4A90D9" Foreground="White" Style="{StaticResource Btn}"/>
                     <Separator Margin="0,10,0,0"/>
 

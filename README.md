@@ -1,96 +1,176 @@
-# TuoJie - AI Renderer for Rhino
+# TuoJie (拓界) — Rhino AI Renderer 插件使用与安装指南
 
-Rhino plugin for viewport capture and AI image generation. The plugin captures the active Rhino viewport, sends the request through a Sidecar process, and saves the generated image locally.
+**TuoJie (拓界)** 是一款专为 Rhino 7 / Rhino 8 打造的 AI 图生图渲染插件。它将 Rhino 视口截取与先进的多模态生成大模型无缝结合，支持一键出图、风格参考迁移、局部遮罩重绘以及批量命名视图渲染。
 
-## Install
+---
 
-1. Download and unzip the matching `TuoJie-*.zip` package.
-2. Open Rhino and load `TuoJie.rhp` from the extracted folder.
-3. Run the `AIRender` command.
-4. In settings, configure the API provider, API key, base URL, and model.
+## 目录
 
-## Current API Path
+- [一、系统与环境要求](#一系统与环境要求)
+- [二、安装与加载](#二安装与加载)
+  - [2.1 下载与解压](#21-下载与解压)
+  - [2.2 加载到 Rhino](#22-加载到-rhino)
+- [三、初始配置与服务商设置](#三初始配置与服务商设置)
+  - [3.1 启动插件](#31-启动插件)
+  - [3.2 配置中转站与模型](#readme-config-models)
+- [四、核心功能与工作流](#四核心功能与工作流)
+  - [4.1 单图渲染（视口截取 / 本地图片）](#readme-single-render)
+  - [4.2 参考图（最多 3 张）](#readme-reference-images)
+  - [4.3 涂抹修改（蒙版）](#readme-mask-edit)
+  - [4.4 批量命名视图渲染（Batch Render）](#44-批量命名视图渲染batch-render)
+  - [4.5 结果迭代与导出](#45-结果迭代与导出)
+- [五、架构特点与网络机制](#五架构特点与网络机制)
+- [六、常见问题排查与诊断 (Troubleshooting)](#六常见问题排查与诊断-troubleshooting)
 
-For api易 / api.apiyi.com, use:
+---
 
+## 一、系统与环境要求
+
+| 项目 | 要求说明 |
+| :--- | :--- |
+| **操作系统** | Windows 10 / Windows 11 (64位) |
+| **Rhino 版本** | **Rhino 8**（使用 `TuoJie-Rhino8-*.zip`）<br>**Rhino 7**（使用 `TuoJie-Rhino7-*.zip`） |
+| **运行时环境** | 预装 .NET Framework 4.8（Win10/Win11 自带）。<br>Rhino 8 推荐 .NET 7，如未安装会自动降级至内置 .NET 4.8 Sidecar 兜底。 |
+
+---
+
+## 二、安装与加载
+
+### 2.1 下载与解压
+1. 下载对应 Rhino 版本的发布包（`TuoJie-Rhino8-*.zip` 或 `TuoJie-Rhino7-*.zip`）。
+2. 解压到一个固定的本地文件夹（如 `D:\RhinoPlugins\TuoJie`）。
+   > **注意**：请勿在压缩包内直接双击运行，必须完整解压到普通文件夹。确保解压后包含 `TuoJie.rhp`、`TuoJieSidecar.exe`、`diagnose.bat` 及相关 `.dll`。
+
+### 2.2 加载到 Rhino
+
+* **方式 A：拖拽加载（最简单）**
+  1. 打开 Rhino。
+  2. 将解压目录中的 `TuoJie.rhp` 拖拽进 Rhino 的任何视口窗口中。
+  3. 看到 Rhino 命令行提示加载成功即可。
+
+* **方式 B：插件管理器加载**
+  1. 在 Rhino 菜单栏点击 **工具 (Tools) → 选项 (Options)**。
+  2. 选择 **插件程序 (Plug-ins)**。
+  3. 点击下方 **安装 (Install...)** 按钮。
+  4. 浏览并选中解压目录中的 `TuoJie.rhp`，点击打开完成安装。
+
+---
+
+## 三、初始配置与服务商设置
+
+### 3.1 启动插件
+在 Rhino 命令行中输入命令：
 ```text
-https://api.apiyi.com
+AIRender
+```
+按下回车，即可弹出 **TuoJie AI Renderer** 主窗口。
+
+<a id="readme-config-models"></a>
+
+### 3.2 配置中转站与模型
+点击主窗口最右侧窄栏的 **⚙ 设置** 按钮，弹层里只有四项：
+
+1. **中转站地址**：默认 `https://api.apiyi.com/v1`，输入即存。
+2. **API Key**：密码框（可点眼睛切换明文），输入即存。
+3. **快速模型 / 标准模型**：API易地址的普通请求统一使用
+   `/v1/images/generations`；快速出图不传 `size`，标准模式按尺寸传 `size`。
+   通用 OpenAI Images 兼容地址的普通请求使用 `/v1/images/edits`；**模型名改动需要点
+   「保存模型设置」才生效**，留空会回退为默认模型名并提示。
+4. **自动保存生成记录**：生成完成后是否写入历史记录。
+
+当前只支持 API易 / 通用 OpenAI Images 两类协议；Google Gemini 与 Vertex AI 已移除。
+
+#### 已确认的产品模型决策（2026-09-18）
+
+以下是当前插件唯一有效的默认模型名。第三方开发、评审和发布验收**不需要再次询问模型名**；只需验证客户 Key 是否有权限，以及真实接口是否能成功调用。
+
+| 用途 | 模型名 | API易请求 | 是否可在设置中修改 |
+| --- | --- | --- | --- |
+| 快速出图 | `gpt-image-2.5-all` | `POST /v1/images/generations`，不传 `size` | 可以 |
+| 标准模式 | `gpt-image-2.5-vip` | `POST /v1/images/generations`，按尺寸传 `size` | 可以 |
+| 涂抹/蒙版 | `gpt-image-2.5-sunburst` | `POST /v1/images/edits`，附带 `mask` | 不可以，服务层固定 |
+
+通用 OpenAI Images 兼容地址的普通请求走 `/v1/images/edits`；蒙版请求无论地址类型都走 `/v1/images/edits`。不要把上述模型名回退为旧的 `image-2` 或重新引入其他服务商模型。界面任何位置都不展示「有效模型」。
+
+---
+
+## 四、核心功能与工作流
+
+<a id="readme-single-render"></a>
+
+### 4.1 单图渲染（视口截取 / 本地图片）
+1. **底图获取**：
+   - 点击 **📷 截取视口 (Capture Viewport)** 自动截取当前 Rhino 工作视角。
+   - 或点击 **📁 上传图片 (Upload)** 导入本地现有的线框图、渲染白模或草图。
+2. **编写提示词 (Prompt)**：
+   - 描述目标场景的材质、光照、氛围与细节（如：`现代极简建筑，大面积清水混凝土与落地玻璃，黄昏夕阳，暖色室内照明，水面微波倒影，8k写实照片`）。
+   - 字数上限 2000；空提示词时「生成」按钮禁用；生成完成后自动写入提示词历史（默认折叠，可展开复用/删除）。
+3. **生成出图**：
+   - 点击 **生成**，生成中按钮变为「生成中…」并显示进度；完成后结果图出现，可点开看大图。
+
+<a id="readme-reference-images"></a>
+
+### 4.2 参考图（最多 3 张）
+- 「参考图像（可选）」卡片里点 **添加参考图** 选择本地图片，最多 3 张，
+  以 `图2..图4` 的身份参与生成（`图1` 始终是原图）。
+- 缩略图右上角 `×` 删除；点缩略图看大图。
+- 参考图会先复制到 `%APPDATA%\AIRenderer\active-references\`，删掉来源文件不会破坏当前请求。
+
+<a id="readme-mask-edit"></a>
+
+### 4.3 涂抹修改（蒙版，唯一入口是「涂抹修改」按钮）
+仅标准模式可用（快速出图下按钮置灰），且模型设置区不被替代：
+1. 载入原图后点 **涂抹修改**，工具栏浮在原图内部：画笔 / 擦除 / 画笔大小 / 清空蒙版 / 取消 / 完成编辑。
+2. 蒙版直接叠在原图上（半透明红），**未涂抹区域保持不变，涂抹区域 = 需要重绘**。
+3. 点 **完成编辑** 后提示「蒙版已应用，生成时仅重绘涂抹区域」，可直接生成，也可「重新编辑」或「清除蒙版」。
+4. 蒙版链路内部固定使用支持精确 inpainting 的模型，界面不展示模型名。
+
+### 4.4 批量命名视图渲染（Batch Render）
+批量渲染窗口（`Views/BatchRenderWindow.xaml` + `ViewModels/BatchRenderViewModel.cs`）保留且可独立调用，
+但**主界面不再有批量切换按钮**。
+
+### 4.5 结果迭代与导出
+- **再次编辑**：把生成结果放回原始图像，继续涂抹或换提示词。
+- **下载 / 复制图片 / 重新生成 / 删除**：结果卡片头部直接给到。
+- **自动归档**：开启「自动保存生成记录」时，成功生成的图片写入
+  `%APPDATA%\AIRenderer\history\`（单目录，`index.json` 只记路径+时间，上限 30 条，
+  超限删除最旧的图片文件）。右侧 **历史记录** 抽屉里可：用作原图 / 添加为参考图 / 下载 / 删除。
+- **提示词历史**：与生成历史完全分开保存，存在 `%APPDATA%\AIRenderer\prompt-history.json`。
+
+---
+
+## 五、架构特点与网络机制
+
+```
+Rhino.exe (WPF 插件) ──[命名管道 IPC]──→ TuoJieSidecar.exe (独立进程) ──[HTTPS]──→ 大模型 API
 ```
 
-The plugin normalizes the base URL internally. Do not enter duplicate `/v1` paths such as `https://api.apiyi.com/v1/v1`.
+- **独立 Sidecar 进程**：Rhino 主进程不直接发起外部 HTTPS 请求，而是通过 Windows 命名管道由独立的后台进程 `TuoJieSidecar.exe` 进行请求转发。
+- **防火墙隔离容错**：即使公司的网络安全策略或防火墙阻止了 `Rhino.exe` 联网，只要放行 `TuoJieSidecar.exe`，插件依然能正常工作。
+- **双运行时支持与无缝降级**：Rhino 8 默认使用 .NET 7 高性能模式，若检测到缺少 .NET 7 运行环境，将自动无缝降级使用 `net48-sidecar`。
 
-## Release Preflight
+---
 
-Before sending a package to a customer, run:
+## 六、常见问题排查与诊断 (Troubleshooting)
 
-```bat
-tools\release-test.bat
-```
-
-This runs the automated preflight first, then points to the manual release checklist. The automated package checks are ready only when preflight ends with:
-
-```text
-Preflight passed.
-```
-
-This checks build output, package completeness, `diagnose.bat`, Sidecar startup, large screenshot pipe transport, and extracted-package behavior.
-
-The package is customer-ready only after the manual checklist is complete:
-
-```text
-docs\RELEASE_ACCEPTANCE_CHECKLIST.md
-```
-
-## Customer Diagnostics
-
-Each release package includes:
-
+### 1. 一键诊断工具
+解压目录中自带了诊断脚本，遇到问题可双击运行：
 ```bat
 diagnose.bat
 ```
+它会自动检查依赖完整性、Sidecar 连通性、本地命名管道通信与系统防火墙状态。
 
-Ask the customer to run it from the plugin folder if the plugin fails to load or API calls fail. The expected result is `Issues: 0`.
+### 2. 常见故障及处理
 
-## Current Features
+| 现象 | 原因 | 处理方法 |
+| :--- | :--- | :--- |
+| **报错：无法连接到 API / 网络超时** | 杀毒软件或防火墙拦截 | 检查杀毒软件（如 360、火绒、Windows Defender），确保 `TuoJieSidecar.exe` 已加入信任或允许联网白名单。 |
+| **拖入 Rhino 提示“无法加载插件”** | 压缩包解压文件被系统锁定 | 找到 `TuoJie.rhp` 和解压的所有 `.dll`，右键点击 **属性** → 勾选底部的 **解除锁定 (Unblock)** → 点击确定。 |
+| **生成时返回 401 / 403 错误** | API Key 错误或欠费 | 进入插件的 **设置 (Settings)** 检查 API Key 是否填写正确，以及该 Key 是否拥有所选模型的访问额度。 |
+| **Rhino 崩溃或闪退** | 缺少必要的 Sidecar 依赖 | 确保解压目录中的 `net48-sidecar` 文件夹及所有 `.dll` 完整，不要单独移动 `TuoJie.rhp`。 |
 
-- Normal generation captures or uploads a source image, then sends it through `TuoJieSidecar.exe`.
-- APIYI `gpt-image-2` uses `/v1/images/generations`; APIYI `gpt-image-2` custom providers using `ApiFormat=openai` are routed to the generations endpoint automatically.
-- Source image speed mode is available for APIYI `gpt-image-2` on `api.apiyi.com`, `vip.apiyi.com`, and `b.apiyi.com`.
-- Multi-image references are supported in single-image mode:
-  - `image 1` / `图1` is always the Rhino/source image.
-  - Added references are displayed below the source preview as `图2`, `图3`, etc.
-  - References can be added from local files or from the reference library.
-  - Active references are copied to `%APPDATA%\AIRenderer\active-references\` so deleting a library image does not break the current request.
-  - Individual references can be removed with the thumbnail `X`; clearing references removes active temp copies.
-- Mask edit uses the source image as `image 1`; mask/debug images are written under `%APPDATA%\AIRenderer\debug\`.
-
-## Build
-
-```bat
-dotnet build Sidecar\Sidecar.csproj -f net7.0-windows
-dotnet build Sidecar\Sidecar.csproj -f net48
-dotnet build -f net7.0-windows
-dotnet build -f net48
-```
-
-Build output is under:
-
-```text
-bin\Release\net7.0-windows\
-bin\Release\net48\
-```
-
-## Architecture
-
-```text
-Rhino.exe -> TuoJie.rhp -> TuoJieSidecar.exe -> API provider
-                    named pipe IPC          HTTPS
-```
-
-All external HTTP traffic goes through `TuoJieSidecar.exe`, so a customer can block `Rhino.exe` from the network while allowing the Sidecar process.
-
-## Runtime Targets
-
-- Rhino 8 package: `net7.0-windows`
-- Rhino 7 fallback package: `net48`
-- Rhino 8 package also carries a net48 Sidecar fallback under `net48-sidecar\`
+### 3. 日志目录
+在 Windows 运行窗口（`Win + R`）输入以下路径可查看详细运行日志：
+- **配置文件**：`%APPDATA%\AIRenderer\settings.json`
+- **运行与网络日志**：`%APPDATA%\AIRenderer\logs\`
+- **遮罩调试图**：`%APPDATA%\AIRenderer\debug\`

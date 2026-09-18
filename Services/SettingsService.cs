@@ -1,5 +1,6 @@
 using AIRenderer.Models;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Rhino;
 using System;
 using System.Collections.Generic;
@@ -8,22 +9,48 @@ using System.Linq;
 
 namespace AIRenderer.Services
 {
+    /// <summary>
+    /// settings.json 结构。新字段为运行时使用；Legacy* 字段仅为兼容读取旧文件而保留，
+    /// 运行时不参与任何调用（Google / Gemini / Vertex 相关配置已彻底移除）。
+    /// </summary>
     public class AppSettings
     {
-        public Dictionary<ApiProvider, string> ApiKeys { get; set; } = new Dictionary<ApiProvider, string>();
-        public Dictionary<string, string> CustomApiKeys { get; set; } = new Dictionary<string, string>();
-        public List<CustomProviderConfig> CustomProviders { get; set; } = new List<CustomProviderConfig>();
-        /// <summary>内置服务商的覆盖配置，key 为 ApiProvider 枚举名称（如 "BltAI"）</summary>
-        public Dictionary<string, CustomProviderConfig> BuiltInOverrides { get; set; } = new Dictionary<string, CustomProviderConfig>();
-        public string SelectedModel { get; set; } = "gemini-3.1-flash-image-preview";
-        public ApiProvider SelectedProvider { get; set; } = ApiProvider.BltAI;
-        /// <summary>null 表示使用内置 SelectedProvider；非 null 表示自定义服务商 ID</summary>
-        public string SelectedProviderId { get; set; } = null;
+        // ── 当前使用 ──────────────────────────────────────────────────────
+        public string BaseUrl { get; set; } = ProviderItem.ApiYiDefaultBaseUrl;
+        public string ApiKey { get; set; } = "";
+        public string FastModel { get; set; } = ProviderItem.ApiYiDefaultFastModel;
+        public string StdModel { get; set; } = ProviderItem.ApiYiDefaultStdModel;
+        public bool AutoSaveHistory { get; set; } = true;
+        public bool IsFastMode { get; set; } = true;
+        public string AspectRatio { get; set; } = "auto";
+        public string ImageSize { get; set; } = "1K";
         public int LanguageIndex { get; set; } = 0;
         public List<PromptTemplate> PromptTemplates { get; set; } = new List<PromptTemplate>();
         public List<ReferenceImageItem> ReferenceImages { get; set; } = new List<ReferenceImageItem>();
-        public string VertexProject { get; set; } = "";
-        public string VertexLocation { get; set; } = "us-central1";
+
+        // ── 仅用于一次性迁移的旧字段（读旧 json，写回时原样保留）────────────
+        [JsonProperty("ApiKeys")]
+        public Dictionary<string, string> LegacyApiKeys { get; set; } = new Dictionary<string, string>();
+
+        [JsonProperty("CustomApiKeys")]
+        public Dictionary<string, string> LegacyCustomApiKeys { get; set; } = new Dictionary<string, string>();
+
+        [JsonProperty("SelectedModel")]
+        public string LegacySelectedModel { get; set; }
+
+        [JsonProperty("SelectedProviderId")]
+        public string LegacySelectedProviderId { get; set; }
+
+        // 以下三块是旧版本的服务商配置：运行时完全不使用，但保存时必须原样回写，
+        // 否则用户升级后第一次保存设置就会丢掉自定义服务商 / 内置覆盖 / 旧选择。
+        [JsonProperty("CustomProviders", NullValueHandling = NullValueHandling.Ignore)]
+        public JToken LegacyCustomProviders { get; set; }
+
+        [JsonProperty("BuiltInOverrides", NullValueHandling = NullValueHandling.Ignore)]
+        public JToken LegacyBuiltInOverrides { get; set; }
+
+        [JsonProperty("SelectedProvider", NullValueHandling = NullValueHandling.Ignore)]
+        public JToken LegacySelectedProvider { get; set; }
     }
 
     public static class SettingsService
@@ -34,217 +61,125 @@ namespace AIRenderer.Services
 
         private static readonly string SettingsFile = Path.Combine(SettingsFolder, "settings.json");
 
-        // ── 主要 API（ProviderItem 版）──────────────────────────────────────
+        // ── 新版：整份 RenderSettings 读写 ────────────────────────────────
 
-        public static (string apiKey, string selectedModel, ProviderItem selectedProvider) LoadSettingsWithProvider()
+        /// <summary>读取设置（首次或旧版本文件都会做一次兼容迁移）</summary>
+        public static RenderSettings LoadRenderSettings()
         {
             var settings = LoadSettingsInternal();
             Loc.CurrentLanguage = Loc.GetLanguageFromIndex(settings.LanguageIndex);
 
-            // 复用 GetAllProviders 内部逻辑，确保 BuiltInOverrides 生效
-            var allProviders = BuildProviderList(settings);
-            ProviderItem provider = null;
-            string apiKey = "";
-
-            if (!string.IsNullOrEmpty(settings.SelectedProviderId))
+            var render = new RenderSettings
             {
-                provider = allProviders.Find(p => p.Id == settings.SelectedProviderId);
-                if (provider != null)
-                    apiKey = settings.CustomApiKeys?.ContainsKey(settings.SelectedProviderId) == true
-                        ? settings.CustomApiKeys[settings.SelectedProviderId] : "";
-            }
+                BaseUrl = settings.BaseUrl,
+                ApiKey = settings.ApiKey,
+                IsFastMode = settings.IsFastMode,
+                AutoSaveHistory = settings.AutoSaveHistory,
+                SelectedImageSize = settings.ImageSize
+            };
+            // 模型名走 setter，内部会做空值回落
+            render.FastModel = settings.FastModel;
+            render.StdModel = settings.StdModel;
 
-            if (provider == null)
+            var ratio = render.AspectRatios.FirstOrDefault(
+                r => string.Equals(r.Ratio, settings.AspectRatio, StringComparison.OrdinalIgnoreCase));
+            render.SelectedAspectRatio = ratio ?? render.AspectRatios[0];
+            render.SelectedProviderItem = BuildApiYiProvider(render);
+
+            return render;
+        }
+
+        /// <summary>
+        /// 保存设置。模型名只在用户点「保存模型设置」时才会被写进来，
+        /// 调用方通过是否更新 FastModel/StdModel 来控制该语义。
+        /// </summary>
+        public static void SaveRenderSettings(RenderSettings render)
+        {
+            try
             {
-                var builtInId = settings.SelectedProvider.ToString();
-                provider = allProviders.Find(p => p.Id == builtInId)
-                    ?? ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.BltAI));
-                if (settings.ApiKeys?.ContainsKey(settings.SelectedProvider) == true)
-                    apiKey = settings.ApiKeys[settings.SelectedProvider];
-            }
+                if (render == null)
+                    return;
 
-            return (apiKey, settings.SelectedModel, provider);
+                if (!Directory.Exists(SettingsFolder))
+                    Directory.CreateDirectory(SettingsFolder);
+
+                var settings = LoadSettingsInternal();
+                settings.BaseUrl = ProviderItem.NormalizeBaseUrl(render.BaseUrl);
+                settings.ApiKey = render.ApiKey ?? "";
+                settings.FastModel = render.FastModel;
+                settings.StdModel = render.StdModel;
+                settings.AutoSaveHistory = render.AutoSaveHistory;
+                settings.IsFastMode = render.IsFastMode;
+                settings.AspectRatio = render.SelectedAspectRatio?.Ratio ?? "auto";
+                settings.ImageSize = render.SelectedImageSize ?? "1K";
+
+                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
+            }
+            catch (Exception ex)
+            {
+                LogService.Error("Error saving settings", ex);
+            }
+        }
+
+        private static ProviderItem BuildApiYiProvider(RenderSettings render)
+        {
+            var provider = ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi));
+            provider.BaseUrl = ProviderItem.NormalizeBaseUrl(render.BaseUrl);
+            provider.ApiFormat = ProviderItem.IsApiYiHost(provider.BaseUrl) ? "images_generations" : "openai";
+            provider.DefaultModel = render.StdModel;
+            provider.Models = new List<string> { render.FastModel, render.StdModel, RenderSettings.MaskModel }
+                .Where(m => !string.IsNullOrWhiteSpace(m)).Distinct().ToList();
+            return provider;
+        }
+
+        // ── 兼容旧调用 ────────────────────────────────────────────────────
+
+        public static (string apiKey, string selectedModel, ProviderItem selectedProvider) LoadSettingsWithProvider()
+        {
+            var render = LoadRenderSettings();
+            return (render.ApiKey, render.SelectedModel, render.SelectedProviderItem);
         }
 
         public static void SaveSettings(string apiKey, string selectedModel, ProviderItem provider)
         {
-            try
+            var render = LoadRenderSettings();
+            render.ApiKey = apiKey ?? render.ApiKey;
+            if (!string.IsNullOrWhiteSpace(selectedModel))
+                render.SelectedModel = selectedModel;
+            if (provider != null)
             {
-                if (!Directory.Exists(SettingsFolder))
-                    Directory.CreateDirectory(SettingsFolder);
-
-                var settings = LoadSettingsInternal();
-                if (settings.ApiKeys == null) settings.ApiKeys = new Dictionary<ApiProvider, string>();
-                if (settings.CustomApiKeys == null) settings.CustomApiKeys = new Dictionary<string, string>();
-
-                if (!provider.IsCustom && provider.BuiltInProvider.HasValue)
-                {
-                    settings.ApiKeys[provider.BuiltInProvider.Value] = apiKey;
-                    settings.SelectedProvider = provider.BuiltInProvider.Value;
-                    settings.SelectedProviderId = null;
-                }
-                else
-                {
-                    settings.CustomApiKeys[provider.Id] = apiKey;
-                    settings.SelectedProviderId = provider.Id;
-                }
-
-                settings.SelectedModel = selectedModel;
-                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
-                RhinoApp.WriteLine($"Settings saved to: {SettingsFile}");
+                render.BaseUrl = provider.BaseUrl;
+                render.SelectedProviderItem = provider;
             }
-            catch (Exception ex)
-            {
-                RhinoApp.WriteLine($"Error saving settings: {ex.Message}");
-            }
-        }
-
-        public static string GetApiKey(string providerId)
-        {
-            var settings = LoadSettingsInternal();
-            if (Enum.TryParse<ApiProvider>(providerId, out var builtIn))
-            {
-                return settings.ApiKeys?.ContainsKey(builtIn) == true ? settings.ApiKeys[builtIn] : "";
-            }
-            return settings.CustomApiKeys?.ContainsKey(providerId) == true
-                ? settings.CustomApiKeys[providerId] : "";
-        }
-
-        public static List<ProviderItem> GetAllProviders()
-        {
-            return BuildProviderList(LoadSettingsInternal());
-        }
-
-        private static List<ProviderItem> BuildProviderList(AppSettings settings)
-        {
-            var providers = new List<ProviderItem>();
-
-            // 内置服务商（优先使用用户覆盖配置）
-            foreach (var config in ApiProviderConfig.GetAllProviders())
-            {
-                var key = config.Provider.ToString();
-                if (settings.BuiltInOverrides?.ContainsKey(key) == true)
-                {
-                    var ov = settings.BuiltInOverrides[key];
-                    var models = ov.Models?.Count > 0 ? ov.Models : config.Models;
-                    providers.Add(new ProviderItem
-                    {
-                        Id = key,
-                        DisplayName = !string.IsNullOrEmpty(ov.DisplayName) ? ov.DisplayName : config.DisplayName,
-                        BaseUrl = ProviderItem.NormalizeBaseUrl(!string.IsNullOrEmpty(ov.BaseUrl) ? ov.BaseUrl : config.BaseUrl),
-                        Models = models,
-                        DefaultModel = !string.IsNullOrEmpty(ov.DefaultModel) ? ov.DefaultModel : (models.Count > 0 ? models[0] : config.DefaultModel),
-                        IsCustom = false,
-                        AuthType = ov.AuthType ?? "bearer",
-                        ApiFormat = ov.ApiFormat ?? "gemini",
-                        ApiKeyUrl = config.ApiKeyUrl,
-                        BuiltInProvider = config.Provider
-                    });
-                }
-                else
-                {
-                    providers.Add(ProviderItem.FromBuiltIn(config));
-                }
-            }
-
-            // 用户自定义服务商
-            if (settings.CustomProviders != null)
-                foreach (var custom in settings.CustomProviders)
-                    providers.Add(ProviderItem.FromCustom(custom));
-
-            return providers;
-        }
-
-        public static void SaveBuiltInOverride(string providerId, CustomProviderConfig config)
-        {
-            try
-            {
-                if (!Directory.Exists(SettingsFolder))
-                    Directory.CreateDirectory(SettingsFolder);
-
-                var settings = LoadSettingsInternal();
-                if (settings.BuiltInOverrides == null)
-                    settings.BuiltInOverrides = new Dictionary<string, CustomProviderConfig>();
-                settings.BuiltInOverrides[providerId] = config;
-                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
-            }
-            catch (Exception ex)
-            {
-                RhinoApp.WriteLine($"Error saving built-in override: {ex.Message}");
-            }
-        }
-
-        public static void SaveCustomProvider(CustomProviderConfig config)
-        {
-            try
-            {
-                if (!Directory.Exists(SettingsFolder))
-                    Directory.CreateDirectory(SettingsFolder);
-
-                var settings = LoadSettingsInternal();
-                if (settings.CustomProviders == null)
-                    settings.CustomProviders = new List<CustomProviderConfig>();
-
-                var idx = settings.CustomProviders.FindIndex(p => p.Id == config.Id);
-                if (idx >= 0)
-                    settings.CustomProviders[idx] = config;
-                else
-                    settings.CustomProviders.Add(config);
-
-                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
-            }
-            catch (Exception ex)
-            {
-                RhinoApp.WriteLine($"Error saving custom provider: {ex.Message}");
-            }
-        }
-
-        public static void DeleteCustomProvider(string id)
-        {
-            try
-            {
-                var settings = LoadSettingsInternal();
-                settings.CustomProviders?.RemoveAll(p => p.Id == id);
-                settings.CustomApiKeys?.Remove(id);
-                if (settings.SelectedProviderId == id)
-                {
-                    settings.SelectedProviderId = null;
-                    settings.SelectedProvider = ApiProvider.BltAI;
-                }
-                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
-            }
-            catch (Exception ex)
-            {
-                RhinoApp.WriteLine($"Error deleting custom provider: {ex.Message}");
-            }
-        }
-
-        // ── 兼容旧接口 ────────────────────────────────────────────────────────
-
-        public static void SaveSettings(string apiKey, string selectedModel, ApiProvider selectedProvider)
-        {
-            var provider = ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(selectedProvider));
-            SaveSettings(apiKey, selectedModel, provider);
-        }
-
-        public static string GetApiKey(ApiProvider provider)
-        {
-            return GetApiKey(provider.ToString());
+            SaveRenderSettings(render);
         }
 
         public static (string apiKey, string selectedModel, ApiProvider selectedProvider) LoadSettings()
         {
             var (apiKey, selectedModel, provider) = LoadSettingsWithProvider();
-            var builtIn = provider.BuiltInProvider ?? ApiProvider.BltAI;
-            return (apiKey, selectedModel, builtIn);
+            return (apiKey, selectedModel, provider?.BuiltInProvider ?? ApiProvider.ApiYi);
         }
 
-        // ── Prompt Templates ──────────────────────────────────────────────────
+        public static void SaveSettings(string apiKey, string selectedModel, ApiProvider selectedProvider)
+            => SaveSettings(apiKey, selectedModel, ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi)));
+
+        public static string GetApiKey(string providerId)
+        {
+            var settings = LoadSettingsInternal();
+            return string.IsNullOrEmpty(settings.ApiKey)
+                ? FirstLegacyKey(settings)
+                : settings.ApiKey;
+        }
+
+        public static string GetApiKey(ApiProvider provider) => GetApiKey(provider.ToString());
+
+        public static List<ProviderItem> GetAllProviders()
+            => new List<ProviderItem> { ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi)) };
+
+        // ── Prompt Templates ──────────────────────────────────────────────
 
         public static List<PromptTemplate> LoadPromptTemplates()
-        {
-            return LoadSettingsInternal().PromptTemplates ?? new List<PromptTemplate>();
-        }
+            => LoadSettingsInternal().PromptTemplates ?? new List<PromptTemplate>();
 
         public static void SavePromptTemplates(List<PromptTemplate> templates)
         {
@@ -255,10 +190,10 @@ namespace AIRenderer.Services
                 settings.PromptTemplates = templates ?? new List<PromptTemplate>();
                 File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
             }
-            catch (Exception ex) { RhinoApp.WriteLine($"Error saving prompt templates: {ex.Message}"); }
+            catch (Exception ex) { LogService.Error("Error saving prompt templates", ex); }
         }
 
-        // ── Reference Images ─────────────────────────────────────────────────
+        // ── Reference Images ──────────────────────────────────────────────
 
         public static List<ReferenceImageItem> LoadReferenceImages()
         {
@@ -275,18 +210,16 @@ namespace AIRenderer.Services
                     try
                     {
                         if (!Directory.Exists(refDir)) Directory.CreateDirectory(refDir);
-                        
                         var bytes = Convert.FromBase64String(img.Base64Data);
                         var newPath = Path.Combine(refDir, $"{img.Id}.png");
                         File.WriteAllBytes(newPath, bytes);
-                        
                         img.FilePath = newPath;
-                        img.Base64Data = null; // Clear out the bulky data
+                        img.Base64Data = null; // 迁移后不再把 base64 留在 settings.json 里
                         needsSave = true;
                     }
                     catch (Exception ex)
                     {
-                        RhinoApp.WriteLine($"Error migrating reference image {img.Name}: {ex.Message}");
+                        LogService.Error($"Error migrating reference image {img.Name}", ex);
                     }
                 }
             }
@@ -309,32 +242,12 @@ namespace AIRenderer.Services
                 settings.ReferenceImages = images ?? new List<ReferenceImageItem>();
                 File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
             }
-            catch (Exception ex) { RhinoApp.WriteLine($"Error saving reference images: {ex.Message}"); }
+            catch (Exception ex) { LogService.Error("Error saving reference images", ex); }
         }
 
-        public static (string project, string location) LoadVertexSettings()
-        {
-            var settings = LoadSettingsInternal();
-            return (settings.VertexProject, settings.VertexLocation);
-        }
+        // ── 语言 ──────────────────────────────────────────────────────────
 
-        public static void SaveVertexSettings(string project, string location)
-        {
-            try
-            {
-                if (!Directory.Exists(SettingsFolder)) Directory.CreateDirectory(SettingsFolder);
-                var settings = LoadSettingsInternal();
-                settings.VertexProject = project;
-                settings.VertexLocation = location;
-                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
-            }
-            catch (Exception ex) { RhinoApp.WriteLine($"Error saving vertex settings: {ex.Message}"); }
-        }
-
-        public static int LoadLanguageIndex()
-        {
-            return LoadSettingsInternal().LanguageIndex;
-        }
+        public static int LoadLanguageIndex() => LoadSettingsInternal().LanguageIndex;
 
         public static void SaveLanguage(int languageIndex)
         {
@@ -345,11 +258,10 @@ namespace AIRenderer.Services
                 Loc.CurrentLanguage = Loc.GetLanguageFromIndex(languageIndex);
                 File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
             }
-            catch (Exception ex)
-            {
-                RhinoApp.WriteLine($"Error saving language: {ex.Message}");
-            }
+            catch (Exception ex) { LogService.Error("Error saving language", ex); }
         }
+
+        // ── 读取 + 一次性迁移 ─────────────────────────────────────────────
 
         private static AppSettings LoadSettingsInternal()
         {
@@ -367,60 +279,81 @@ namespace AIRenderer.Services
             }
             catch (Exception ex)
             {
-                RhinoApp.WriteLine($"Error loading settings: {ex.Message}");
+                LogService.Error("Error loading settings", ex);
             }
 
-            // 首次启动：根据系统语言自动选择
             var defaults = new AppSettings();
             var culture = System.Globalization.CultureInfo.CurrentUICulture;
             defaults.LanguageIndex = culture.Name.StartsWith("zh") ? 0 : 1;
             return defaults;
         }
 
+        /// <summary>
+        /// 兼容迁移：把旧版本的 Gemini / Vertex / 多服务商配置收敛到 API易，
+        /// 保留用户已有的提示词、参考图与 API Key，不删除旧字段。
+        /// </summary>
         private static void NormalizeSettings(AppSettings settings)
         {
-            if (settings.ApiKeys == null)
-                settings.ApiKeys = new Dictionary<ApiProvider, string>();
-            if (settings.CustomApiKeys == null)
-                settings.CustomApiKeys = new Dictionary<string, string>();
-            if (settings.CustomProviders == null)
-                settings.CustomProviders = new List<CustomProviderConfig>();
-            if (settings.BuiltInOverrides == null)
-                settings.BuiltInOverrides = new Dictionary<string, CustomProviderConfig>();
+            if (settings.PromptTemplates == null)
+                settings.PromptTemplates = new List<PromptTemplate>();
+            if (settings.ReferenceImages == null)
+                settings.ReferenceImages = new List<ReferenceImageItem>();
+            if (settings.LegacyApiKeys == null)
+                settings.LegacyApiKeys = new Dictionary<string, string>();
+            if (settings.LegacyCustomApiKeys == null)
+                settings.LegacyCustomApiKeys = new Dictionary<string, string>();
 
-            if (settings.SelectedProvider == ApiProvider.BltFlux)
-                settings.SelectedProvider = ApiProvider.BltGenerations;
+            // 1) 中转站与模型默认值
+            if (string.IsNullOrWhiteSpace(settings.BaseUrl))
+                settings.BaseUrl = ProviderItem.ApiYiDefaultBaseUrl;
+            settings.BaseUrl = ProviderItem.NormalizeBaseUrl(settings.BaseUrl);
 
-            if (settings.BuiltInOverrides.TryGetValue("BltFlux", out var oldFluxOverride))
+            // 2) API Key 迁移：新字段为空时，从旧的多服务商字典里取第一个非空值
+            if (string.IsNullOrWhiteSpace(settings.ApiKey))
+                settings.ApiKey = FirstLegacyKey(settings) ?? "";
+
+            // 3) 模型名迁移：只接受 2.5 系列；旧的 gemini / 2.0 模型名一律回落默认值
+            settings.FastModel = MigrateModelName(settings.FastModel, settings.LegacySelectedModel,
+                ProviderItem.ApiYiDefaultFastModel, "all");
+            settings.StdModel = MigrateModelName(settings.StdModel, settings.LegacySelectedModel,
+                ProviderItem.ApiYiDefaultStdModel, "vip");
+
+            // 4) 其它兜底
+            if (string.IsNullOrWhiteSpace(settings.ImageSize) ||
+                !ImageSizeTable.SizeKeys.Contains(settings.ImageSize))
+                settings.ImageSize = "1K";
+
+            if (string.IsNullOrWhiteSpace(settings.AspectRatio))
+                settings.AspectRatio = ImageSizeTable.RatioAuto;
+        }
+
+        private static string FirstLegacyKey(AppSettings settings)
+        {
+            var fromBuiltIn = settings.LegacyApiKeys?.Values?.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+            if (!string.IsNullOrWhiteSpace(fromBuiltIn))
+                return fromBuiltIn;
+            return settings.LegacyCustomApiKeys?.Values?.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+        }
+
+        /// <summary>旧 SelectedModel 里的 gpt-image-2.x 名字迁移到新版字段；Gemini 等一律丢弃</summary>
+        private static string MigrateModelName(string current, string legacy, string fallback, string suffix)
+        {
+            if (!string.IsNullOrWhiteSpace(current) && current.StartsWith("gpt-image-2.5", StringComparison.OrdinalIgnoreCase))
+                return current;
+
+            if (!string.IsNullOrWhiteSpace(legacy) &&
+                legacy.StartsWith("gpt-image-2", StringComparison.OrdinalIgnoreCase))
             {
-                settings.BuiltInOverrides["BltGenerations"] = oldFluxOverride;
-                settings.BuiltInOverrides.Remove("BltFlux");
+                // gpt-image-2-all → gpt-image-2.5-all；gpt-image-2-vip → gpt-image-2.5-vip
+                if (legacy.EndsWith("-" + suffix, StringComparison.OrdinalIgnoreCase))
+                    return "gpt-image-2.5-" + suffix;
+                if (legacy.Equals("gpt-image-2-all", StringComparison.OrdinalIgnoreCase))
+                    return ProviderItem.ApiYiDefaultFastModel;
+                if (legacy.Equals("gpt-image-2-vip", StringComparison.OrdinalIgnoreCase))
+                    return ProviderItem.ApiYiDefaultStdModel;
             }
 
-            settings.BuiltInOverrides.Remove("BltResponses");
-            settings.BuiltInOverrides.Remove("BltChat");
-
-            var builtInIds = new HashSet<string>(
-                ApiProviderConfig.GetAllProviders().Select(p => p.Provider.ToString()));
-            if (!string.IsNullOrEmpty(settings.SelectedProviderId) &&
-                !settings.CustomProviders.Any(p => p.Id == settings.SelectedProviderId) &&
-                !builtInIds.Contains(settings.SelectedProviderId))
-            {
-                settings.SelectedProviderId = null;
-                settings.SelectedProvider = ApiProvider.BltAI;
-            }
-
-            if (settings.SelectedProvider == ApiProvider.BltResponses ||
-                settings.SelectedProvider == ApiProvider.BltChat)
-            {
-                settings.SelectedProvider = ApiProvider.BltAI;
-            }
-
-            var selectedConfig = ApiProviderConfig.GetConfig(settings.SelectedProvider);
-            if (selectedConfig?.Models?.Contains(settings.SelectedModel) == false)
-            {
-                settings.SelectedModel = selectedConfig.DefaultModel;
-            }
+            return fallback;
         }
     }
 }

@@ -68,18 +68,6 @@ namespace AIRenderer.Services
         }
 
         /// <summary>
-        /// Gets available viewport names
-        /// </summary>
-        public static string[] GetAvailableViewports()
-        {
-            var views = RhinoDoc.ActiveDoc.Views;
-            if (views == null)
-                return new string[0];
-
-            return views.Select(v => v.MainViewport.Name).ToArray();
-        }
-
-        /// <summary>
         /// Captures a specific view by name
         /// </summary>
         public static Bitmap CaptureViewByName(string viewName)
@@ -201,7 +189,7 @@ namespace AIRenderer.Services
             {
                 encoder.Save(ms);
                 ms.Position = 0;
-                return new Bitmap(ms);
+                return ImageUtil.FromStream(ms);
             }
         }
 

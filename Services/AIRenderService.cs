@@ -1,11 +1,10 @@
 using AIRenderer.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using Rhino;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
@@ -16,20 +15,31 @@ using System.Threading.Tasks;
 
 namespace AIRenderer.Services
 {
+    /// <summary>
+    /// 主渲染链路：只保留两类协议
+    ///   1) API易兼容 Generations：POST {baseUrl}/v1/images/generations（JSON：model / prompt / size? / image[]）
+    ///   2) 通用 OpenAI Images：POST {baseUrl}/v1/images/edits（multipart：image / prompt / model / size?）
+    /// 蒙版修改一律走 /v1/images/edits 并附带 mask。
+    /// 所有请求都经 SidecarHttpMessageHandler，Rhino 进程内不直接访问外网。
+    /// Google / Gemini / Vertex 相关调用与字段已彻底移除。
+    /// </summary>
     public class AIRenderService
     {
         private readonly HttpClient _httpClient;
+        private static readonly HttpClient DownloadClient = new HttpClient(new SidecarHttpMessageHandler());
+
         public string LastError { get; private set; }
 
         public AIRenderService()
         {
-            _httpClient = new HttpClient(new SidecarHttpMessageHandler());
-            _httpClient.Timeout = TimeSpan.FromMinutes(30);
+            _httpClient = new HttpClient(new SidecarHttpMessageHandler())
+            {
+                Timeout = TimeSpan.FromMinutes(10)
+            };
         }
 
-        /// <summary>
-        /// 生成图片（ProviderItem 版，支持内置和自定义服务商）
-        /// </summary>
+        // ── 对外入口（保持既有签名，批量流程继续可用）────────────────────
+
         public async Task<Bitmap> GenerateImageAsync(
             ProviderItem provider,
             string apiKey,
@@ -39,649 +49,39 @@ namespace AIRenderer.Services
             Bitmap referenceImage = null,
             IReadOnlyList<Bitmap> referenceImages = null)
         {
-            bool usesAdc = provider?.BuiltInProvider == ApiProvider.VertexADC || provider?.Id == ApiProvider.VertexADC.ToString();
-            if (!usesAdc && string.IsNullOrWhiteSpace(apiKey))
-            {
-                RhinoApp.WriteLine("API key is required.");
+            LastError = null;
+            if (!ValidateRequest(apiKey, sourceImage))
                 return null;
-            }
-            if (sourceImage == null)
-            {
-                RhinoApp.WriteLine("Source image is required.");
-                return null;
-            }
 
-            // 只有未被覆盖的内置 Gemini 格式、且无参考图时走枚举路由
-            if (!provider.IsCustom && provider.BuiltInProvider.HasValue &&
-                provider.ApiFormat == "gemini" && referenceImage == null)
-                return await GenerateImageAsync(provider.BuiltInProvider.Value, apiKey, prompt, sourceImage, settings);
-
-            string fullPrompt = prompt;
-            if (!string.IsNullOrWhiteSpace(settings.SystemPrompt))
-                fullPrompt = $"{settings.SystemPrompt}\n\n{prompt}";
-
-            if (ShouldUseGenerationsForNormalApiYiGptImage(provider, settings))
-                return await GenerateImagesGenerationsAsync(provider, apiKey, fullPrompt, sourceImage, settings, referenceImages);
-
-            if (provider.ApiFormat == "openai")
-                return await GenerateOpenAIAsync(provider, apiKey, fullPrompt, sourceImage, settings);
-
-            if (provider.ApiFormat == "images_generations")
-                return await GenerateImagesGenerationsAsync(provider, apiKey, fullPrompt, sourceImage, settings, referenceImages);
-
-            if (provider.ApiFormat == "responses" || provider.ApiFormat == "chat")
-            {
-                RhinoApp.WriteLine($"{provider.DisplayName} is a text API endpoint and cannot return a render image.");
-                return null;
-            }
-
-            if (!provider.IsCustom && provider.BuiltInProvider.HasValue &&
-                (provider.BuiltInProvider.Value == ApiProvider.VertexKey || provider.BuiltInProvider.Value == ApiProvider.VertexADC))
-            {
-                var config = ApiProviderConfig.GetConfig(provider.BuiltInProvider.Value);
-                return await GenerateVertexAsync(
-                    config,
-                    apiKey,
-                    fullPrompt,
-                    sourceImage,
-                    settings,
-                    provider.BuiltInProvider.Value == ApiProvider.VertexADC,
-                    referenceImage);
-            }
-
-            return await GenerateCustomAsync(provider, apiKey, fullPrompt, sourceImage, settings, referenceImage);
-        }
-
-        private static bool ShouldUseGenerationsForNormalApiYiGptImage(ProviderItem provider, RenderSettings settings)
-        {
-            if (provider == null || provider.ApiFormat != "openai")
-                return false;
-
-            var model = settings?.SelectedModel ?? provider.DefaultModel ?? "";
-            if (!model.Equals("gpt-image-2", StringComparison.OrdinalIgnoreCase))
-                return false;
+            var references = CollectReferences(referenceImage, referenceImages);
+            var baseUrl = ResolveBaseUrl(provider, settings);
 
             try
             {
-                var host = new Uri(provider.BaseUrl ?? "").Host;
-                return host.Equals("api.apiyi.com", StringComparison.OrdinalIgnoreCase) ||
-                       host.Equals("vip.apiyi.com", StringComparison.OrdinalIgnoreCase) ||
-                       host.Equals("b.apiyi.com", StringComparison.OrdinalIgnoreCase);
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// 生成图片（根据不同服务商使用不同请求格式）
-        /// </summary>
-        public async Task<Bitmap> GenerateImageAsync(
-            ApiProvider provider,
-            string apiKey,
-            string prompt,
-            Bitmap sourceImage,
-            RenderSettings settings)
-        {
-            if (provider != ApiProvider.VertexADC && string.IsNullOrWhiteSpace(apiKey))
-            {
-                RhinoApp.WriteLine("API key is required.");
-                return null;
-            }
-
-            if (sourceImage == null)
-            {
-                RhinoApp.WriteLine("Source image is required.");
-                return null;
-            }
-
-            var config = ApiProviderConfig.GetConfig(provider);
-            if (config == null)
-            {
-                RhinoApp.WriteLine("Unknown API provider.");
-                return null;
-            }
-
-            // Combine system prompt with user prompt
-            string fullPrompt = prompt;
-            if (!string.IsNullOrWhiteSpace(settings.SystemPrompt))
-            {
-                fullPrompt = $"{settings.SystemPrompt}\n\n{prompt}";
-            }
-
-            switch (provider)
-            {
-                case ApiProvider.Gemini:
-                    return await GenerateGeminiAsync(config, apiKey, fullPrompt, sourceImage, settings);
-                case ApiProvider.VertexKey:
-                    return await GenerateVertexAsync(config, apiKey, fullPrompt, sourceImage, settings, false);
-                case ApiProvider.VertexADC:
-                    return await GenerateVertexAsync(config, apiKey, fullPrompt, sourceImage, settings, true);
-                case ApiProvider.BltAI:
-                    return await GenerateBltAIAsync(config, apiKey, fullPrompt, sourceImage, settings);
-                default:
-                    return null;
-            }
-        }
-
-        #region Gemini
-        private async Task<Bitmap> GenerateVertexAsync(
-            ApiProviderConfig config, string apiKey, string prompt,
-            Bitmap sourceImage, RenderSettings settings, bool isAdc,
-            Bitmap referenceImage = null)
-        {
-            try
-            {
-                string imageBase64 = ScreenCapture.ToBase64(sourceImage, ImageFormat.Png);
-                string model = settings.SelectedModel ?? config.DefaultModel;
-                
-                string project = string.IsNullOrWhiteSpace(settings.VertexProject) ? "your-project-id" : settings.VertexProject;
-                string location = string.IsNullOrWhiteSpace(settings.VertexLocation) ? "us-central1" : settings.VertexLocation;
-                
-                string fullUrl = $"https://{location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent";
-
-                string aspectRatio = settings.SelectedAspectRatio?.Ratio ?? "";
-                string imageSize = settings.SelectedImageSize ?? "1K";
-
-                string jsonImageConfig;
-                if (string.IsNullOrEmpty(aspectRatio))
-                    jsonImageConfig = $"{{\"imageSize\":\"{imageSize}\"}}";
-                else
-                    jsonImageConfig = $"{{\"aspectRatio\":\"{aspectRatio}\",\"imageSize\":\"{imageSize}\"}}";
-
-                var parts = new List<object>
+                using (var requestImage = PrepareSourceImage(sourceImage, settings))
                 {
-                    new
-                    {
-                        text = referenceImage == null
-                            ? prompt
-                            : prompt + "\n\nA style reference image is also provided; match its lighting, atmosphere, material feeling, and visual style while preserving the source viewport geometry."
-                    },
-                    new
-                    {
-                        inline_data = new
-                        {
-                            mime_type = "image/png",
-                            data = imageBase64
-                        }
-                    }
-                };
+                    var body = BuildPrompt(prompt, settings, references.Count);
+                    var size = ResolveSize(settings);
 
-                if (referenceImage != null)
-                {
-                    parts.Add(new
-                    {
-                        inline_data = new
-                        {
-                            mime_type = "image/png",
-                            data = ScreenCapture.ToBase64(referenceImage, ImageFormat.Png)
-                        }
-                    });
+                    if (ProviderItem.IsApiYiHost(baseUrl))
+                        return await PostGenerationsAsync(baseUrl, apiKey, body, requestImage, references, settings, size);
+
+                    return await PostEditsAsync(baseUrl, apiKey, body, requestImage, references, settings, size, null);
                 }
-
-                var payload = new
-                {
-                    contents = new[]
-                    {
-                        new
-                        {
-                            role = "user",
-                            parts = parts.ToArray()
-                        }
-                    },
-                    generationConfig = new
-                    {
-                        responseModalities = new[] { "TEXT", "IMAGE" },
-                        imageConfig = JsonConvert.DeserializeObject(jsonImageConfig)
-                    }
-                };
-
-                var jsonPayload = JsonConvert.SerializeObject(payload);
-                var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
-                _httpClient.DefaultRequestHeaders.Add("X-Request-ID", Guid.NewGuid().ToString());
-                
-                if (isAdc)
-                {
-                    string token = await GetGoogleCloudAccessTokenAsync();
-                    _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-                }
-                else
-                {
-                    _httpClient.DefaultRequestHeaders.Add("x-goog-api-key", apiKey);
-                }
-
-                RhinoApp.WriteLine($"Calling Vertex API: {fullUrl}");
-
-                var response = await _httpClient.PostAsync(fullUrl, content);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    RhinoApp.WriteLine($"API Error ({response.StatusCode}): {errorContent}");
-                    return null;
-                }
-
-                var responseContent = await response.Content.ReadAsStringAsync();
-                return ParseGeminiResponse(responseContent);
             }
             catch (Exception ex)
             {
-                LogService.Error($"Vertex API Error: {ex.Message}", ex);
-                RhinoApp.WriteLine($"Vertex API Error: {ex.Message}");
+                LastError = ex.Message;
+                LogService.Error("GenerateImageAsync failed", ex);
                 return null;
             }
-        }
-
-        private async Task<string> GetGoogleCloudAccessTokenAsync()
-        {
-            var process = new System.Diagnostics.Process
+            finally
             {
-                StartInfo = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "cmd.exe",
-                    Arguments = "/c gcloud auth application-default print-access-token",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-            process.Start();
-            Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
-            Task<string> errorTask = process.StandardError.ReadToEndAsync();
-            await Task.Run(() => process.WaitForExit());
-            string output = (await outputTask).Trim();
-            if (process.ExitCode != 0)
-            {
-                throw new Exception("gcloud returned error: " + await errorTask);
-            }
-            if (string.IsNullOrWhiteSpace(output))
-                throw new Exception("gcloud returned an empty access token. Run: gcloud auth application-default login");
-            return output;
-        }
-
-        private async Task<Bitmap> GenerateGeminiAsync(
-            ApiProviderConfig config, string apiKey, string prompt,
-            Bitmap sourceImage, RenderSettings settings)
-        {
-            try
-            {
-                var totalWatch = Stopwatch.StartNew();
-                var stepWatch = Stopwatch.StartNew();
-                string imageBase64 = ScreenCapture.ToBase64(sourceImage, ImageFormat.Jpeg);
-                LogService.Info($"Timing | Gemini source encode: {stepWatch.ElapsedMilliseconds} ms");
-                stepWatch.Restart();
-
-                string model = settings.SelectedModel ?? config.DefaultModel;
-                string fullUrl = $"{config.BaseUrl.TrimEnd('/')}/v1beta/models/{model}:generateContent";
-
-                string aspectRatio = settings.SelectedAspectRatio?.Ratio ?? "";
-                string imageSize = settings.SelectedImageSize ?? "1K";
-
-                string jsonImageConfig;
-                if (string.IsNullOrEmpty(aspectRatio))
-                {
-                    jsonImageConfig = $"{{\"imageSize\":\"{imageSize}\"}}";
-                }
-                else
-                {
-                    jsonImageConfig = $"{{\"aspectRatio\":\"{aspectRatio}\",\"imageSize\":\"{imageSize}\"}}";
-                }
-
-                var payload = new
-                {
-                    contents = new[]
-                    {
-                        new
-                        {
-                            role = "user",
-                            parts = new object[]
-                            {
-                                new { text = prompt },
-                                new
-                                {
-                                    inline_data = new
-                                    {
-                                        mime_type = "image/png",
-                                        data = imageBase64
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    tools = new[] { new { google_search = new object() } },
-                    generationConfig = new
-                    {
-                        responseModalities = new[] { "TEXT", "IMAGE" },
-                        imageConfig = JsonConvert.DeserializeObject(jsonImageConfig)
-                    }
-                };
-
-                var jsonPayload = JsonConvert.SerializeObject(payload);
-                var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-                LogService.Info($"Timing | Gemini payload serialize: {stepWatch.ElapsedMilliseconds} ms");
-                stepWatch.Restart();
-
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
-                _httpClient.DefaultRequestHeaders.Add("X-Request-ID", Guid.NewGuid().ToString());
-                _httpClient.DefaultRequestHeaders.Add("x-goog-api-key", apiKey);
-
-                RhinoApp.WriteLine($"Calling Gemini API: {fullUrl}");
-
-                var response = await _httpClient.PostAsync(fullUrl, content);
-                LogService.Info($"Timing | Gemini HTTP wait: {stepWatch.ElapsedMilliseconds} ms");
-                stepWatch.Restart();
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    RhinoApp.WriteLine($"API Error ({response.StatusCode}): {errorContent}");
-                    return null;
-                }
-
-                var responseContent = await response.Content.ReadAsStringAsync();
-                LogService.Info($"Timing | Gemini response read: {stepWatch.ElapsedMilliseconds} ms");
-                stepWatch.Restart();
-
-                var parsed = ParseGeminiResponse(responseContent);
-                LogService.Info($"Timing | Gemini response parse: {stepWatch.ElapsedMilliseconds} ms");
-                LogService.Info($"Timing | Gemini service total: {totalWatch.ElapsedMilliseconds} ms");
-                return parsed;
-            }
-            catch (Exception ex)
-            {
-                LogService.Error($"Gemini API Error: {ex.Message}", ex);
-                RhinoApp.WriteLine($"Gemini API Error: {ex.Message}");
-                return null;
+                DisposeAll(references);
             }
         }
 
-        /// <summary>
-        /// 从字节数组解码 Bitmap，返回不依赖任何 Stream 的独立拷贝，
-        /// 避免 GDI+ "A generic error occurred" 问题。
-        /// </summary>
-        private static Bitmap BitmapFromBytes(byte[] bytes)
-        {
-            using (var ms = new MemoryStream(bytes))
-            using (var tmp = new Bitmap(ms))
-            {
-                return tmp.Clone(
-                    new System.Drawing.Rectangle(0, 0, tmp.Width, tmp.Height),
-                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            }
-        }
-
-        private Bitmap ParseGeminiResponse(string responseContent)
-        {
-            try
-            {
-                var json = JObject.Parse(responseContent);
-                var candidates = json["candidates"];
-                if (candidates == null || !candidates.HasValues)
-                {
-                    RhinoApp.WriteLine("No candidates in response.");
-                    return null;
-                }
-
-                var parts = candidates[0]?["content"]?["parts"];
-                if (parts == null) return null;
-
-                string base64Image = null;
-                foreach (var part in parts)
-                {
-                    var inlineData = part["inlineData"];
-                    if (inlineData == null)
-                        inlineData = part["inline_data"];
-                    if (inlineData != null)
-                    {
-                        base64Image = inlineData["data"]?.ToString();
-                        if (!string.IsNullOrEmpty(base64Image)) break;
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(base64Image))
-                {
-                    RhinoApp.WriteLine("No image found in API response.");
-                    return null;
-                }
-
-                return BitmapFromBytes(Convert.FromBase64String(base64Image));
-            }
-            catch (Exception ex)
-            {
-                RhinoApp.WriteLine($"Parse Error: {ex.Message}");
-                return null;
-            }
-        }
-        #endregion
-
-        #region BltAI
-        private async Task<Bitmap> GenerateBltAIAsync(
-            ApiProviderConfig config, string apiKey, string prompt,
-            Bitmap sourceImage, RenderSettings settings)
-        {
-            try
-            {
-                var totalWatch = Stopwatch.StartNew();
-                var stepWatch = Stopwatch.StartNew();
-                string imageBase64 = ScreenCapture.ToBase64(sourceImage, ImageFormat.Png);
-                LogService.Info($"Timing | Nano Banana source encode: {stepWatch.ElapsedMilliseconds} ms");
-                stepWatch.Restart();
-
-                string model = settings.SelectedModel ?? config.DefaultModel;
-                string fullUrl = $"{config.BaseUrl.TrimEnd('/')}/v1beta/models/{model}:generateContent";
-
-                string aspectRatio = settings.SelectedAspectRatio?.Ratio ?? "";
-                string imageSize = settings.SelectedImageSize ?? "1K";
-
-                string jsonImageConfig;
-                if (string.IsNullOrEmpty(aspectRatio))
-                {
-                    jsonImageConfig = $"{{\"imageSize\":\"{imageSize}\"}}";
-                }
-                else
-                {
-                    jsonImageConfig = $"{{\"aspectRatio\":\"{aspectRatio}\",\"imageSize\":\"{imageSize}\"}}";
-                }
-
-                // 使用和Gemini官方一样的格式
-                var payload = new
-                {
-                    contents = new[]
-                    {
-                        new
-                        {
-                            role = "user",
-                            parts = new object[]
-                            {
-                                new { text = prompt },
-                                new
-                                {
-                                    inline_data = new
-                                    {
-                                        mime_type = "image/png",
-                                        data = imageBase64
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    tools = new[] { new { google_search = new object() } },
-                    generationConfig = new
-                    {
-                        responseModalities = new[] { "TEXT", "IMAGE" },
-                        imageConfig = JsonConvert.DeserializeObject(jsonImageConfig)
-                    }
-                };
-
-                var jsonPayload = JsonConvert.SerializeObject(payload);
-                var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-                LogService.Info($"Timing | Nano Banana payload serialize: {stepWatch.ElapsedMilliseconds} ms");
-                stepWatch.Restart();
-
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
-                _httpClient.DefaultRequestHeaders.Add("X-Request-ID", Guid.NewGuid().ToString());
-                _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-
-                RhinoApp.WriteLine($"Calling BltAI API: {fullUrl}");
-                RhinoApp.WriteLine($"Model: {model}");
-
-                var response = await _httpClient.PostAsync(fullUrl, content);
-                LogService.Info($"Timing | Nano Banana HTTP wait: {stepWatch.ElapsedMilliseconds} ms");
-                stepWatch.Restart();
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    RhinoApp.WriteLine($"API Error ({response.StatusCode}): {errorContent}");
-                    return null;
-                }
-
-                var responseContent = await response.Content.ReadAsStringAsync();
-                LogService.Info($"Timing | Nano Banana response read: {stepWatch.ElapsedMilliseconds} ms");
-                stepWatch.Restart();
-
-                RhinoApp.WriteLine($"BltAI Response: {responseContent.Substring(0, Math.Min(500, responseContent.Length))}...");
-                var parsed = ParseGeminiResponse(responseContent);
-                LogService.Info($"Timing | Nano Banana response parse: {stepWatch.ElapsedMilliseconds} ms");
-                LogService.Info($"Timing | Nano Banana service total: {totalWatch.ElapsedMilliseconds} ms");
-                return parsed;
-            }
-            catch (Exception ex)
-            {
-                LogService.Error($"BltAI API Error: {ex.Message}", ex);
-                RhinoApp.WriteLine($"BltAI API Error: {ex.Message}");
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// BltAI 使用 Generations API (即梦4)
-        /// </summary>
-        private async Task<Bitmap> GenerateBltAIAsGenerationsAsync(
-            ApiProviderConfig config, string apiKey, string prompt,
-            Bitmap sourceImage, RenderSettings settings)
-        {
-            try
-            {
-                string model = settings.SelectedModel ?? config.DefaultModel;
-                string aspectRatio = settings.SelectedAspectRatio?.Ratio ?? "1:1";
-
-                string fullUrl = $"{config.BaseUrl.TrimEnd('/')}/v1/images/generations";
-
-                // 转换 aspect ratio 格式
-                aspectRatio = aspectRatio.Replace(":", "/");
-
-                string imageParam = null;
-                if (sourceImage != null)
-                {
-                    string imageBase64 = ScreenCapture.ToBase64(sourceImage, ImageFormat.Png);
-                    imageParam = imageBase64;
-                }
-
-                object payload;
-                if (!string.IsNullOrEmpty(imageParam))
-                {
-                    payload = new
-                    {
-                        model = model,
-                        prompt = prompt,
-                        image = new[] { imageParam }
-                    };
-                }
-                else
-                {
-                    payload = new
-                    {
-                        model = model,
-                        prompt = prompt
-                    };
-                }
-
-                var jsonPayload = JsonConvert.SerializeObject(payload);
-                var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
-                _httpClient.DefaultRequestHeaders.Add("X-Request-ID", Guid.NewGuid().ToString());
-                _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-
-                RhinoApp.WriteLine($"Calling BltAI (Generations API): {fullUrl}");
-                RhinoApp.WriteLine($"Model: {model}");
-
-                var response = await _httpClient.PostAsync(fullUrl, content);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    RhinoApp.WriteLine($"API Error ({response.StatusCode}): {errorContent}");
-                    return null;
-                }
-
-                var responseContent = await response.Content.ReadAsStringAsync();
-                RhinoApp.WriteLine($"BltAI Generations Response: {responseContent.Substring(0, Math.Min(500, responseContent.Length))}...");
-                return await ParseGenerationsResponseAsync(responseContent);
-            }
-            catch (Exception ex)
-            {
-                LogService.Error($"BltAI Generations API Error: {ex.Message}", ex);
-                RhinoApp.WriteLine($"BltAI Generations API Error: {ex.Message}");
-                return null;
-            }
-        }
-
-        private async Task<Bitmap> ParseGenerationsResponseAsync(string responseContent)
-        {
-            try
-            {
-                var json = JObject.Parse(responseContent);
-                var data = json["data"];
-                if (data != null && data.HasValues)
-                {
-                    var firstItem = data[0];
-                    var url = firstItem?["url"]?.ToString();
-                    if (!string.IsNullOrEmpty(url))
-                    {
-                        return await LoadImageFromUrlAsync(url);
-                    }
-                }
-                RhinoApp.WriteLine("No image found in Generations API response.");
-                return null;
-            }
-            catch (Exception ex)
-            {
-                RhinoApp.WriteLine($"Parse Error: {ex.Message}");
-                return null;
-            }
-        }
-
-        private async Task<Bitmap> LoadImageFromUrlAsync(string url)
-        {
-            try
-            {
-                var bytes = await _httpClient.GetByteArrayAsync(url);
-                return BitmapFromBytes(bytes);
-            }
-            catch (Exception ex)
-            {
-                LogService.Error($"Failed to load image from URL: {ex.Message}", ex);
-                RhinoApp.WriteLine($"Failed to load image from URL: {ex.Message}");
-                return null;
-            }
-        }
-        #endregion
-
-        #region Chained Batch (Gemini-compatible)
-        /// <summary>
-        /// 链式生成：第 N 张请求时携带前 N-1 张结果作为一致性参考，
-        /// 要求模型保持光照、材质、人物位置等不变，只改变相机角度。
-        /// </summary>
+        /// <summary>批量/一致性链路：沿用之前的协议，把先前结果作为参考图一起发送</summary>
         public async Task<Bitmap> GenerateChainedAsync(
             ProviderItem provider,
             string apiKey,
@@ -691,181 +91,45 @@ namespace AIRenderer.Services
             RenderSettings settings,
             Bitmap referenceImage = null)
         {
-            try
-            {
-                string fullPrompt = prompt;
-                if (!string.IsNullOrWhiteSpace(settings.SystemPrompt))
-                    fullPrompt = $"{settings.SystemPrompt}\n\n{prompt}";
-
-                // 一致性指令（英文）
-                fullPrompt +=
-                    "\n\nUsing the provided reference rendered image(s) as a strict style guide: " +
-                    "maintain identical lighting direction, shadow angles, material textures, " +
-                    "color palette, atmospheric mood, and positions of any people or objects. " +
-                    "Only change the camera position and angle to match the new architectural viewport shown. " +
-                    "The scene contents, lighting setup, and visual style must remain completely consistent across all views.";
-
-                string model = settings.SelectedModel ?? provider.DefaultModel;
-                string fullUrl = $"{provider.BaseUrl.TrimEnd('/')}/v1beta/models/{model}:generateContent";
-
-                string aspectRatio = settings.SelectedAspectRatio?.Ratio ?? "";
-                string imageSize = settings.SelectedImageSize ?? "1K";
-                string jsonImageConfig = string.IsNullOrEmpty(aspectRatio)
-                    ? $"{{\"imageSize\":\"{imageSize}\"}}"
-                    : $"{{\"aspectRatio\":\"{aspectRatio}\",\"imageSize\":\"{imageSize}\"}}";
-
-                // parts：提示词 + 当前待渲染视角 + 前序结果（一致性参考）+ 样式参考图（若有）
-                var parts = new List<object> { new { text = fullPrompt } };
-                parts.Add(new { inline_data = new { mime_type = "image/png", data = ScreenCapture.ToBase64(currentView, ImageFormat.Png) } });
-                foreach (var prev in previousResults)
-                    parts.Add(new { inline_data = new { mime_type = "image/png", data = ScreenCapture.ToBase64(prev, ImageFormat.Png) } });
-                if (referenceImage != null)
-                    parts.Add(new { inline_data = new { mime_type = "image/png", data = ScreenCapture.ToBase64(referenceImage, ImageFormat.Png) } });
-
-                var payload = new
-                {
-                    contents = new[] { new { role = "user", parts = parts.ToArray() } },
-                    tools = new[] { new { google_search = new object() } },
-                    generationConfig = new
-                    {
-                        responseModalities = new[] { "TEXT", "IMAGE" },
-                        imageConfig = JsonConvert.DeserializeObject(jsonImageConfig)
-                    }
-                };
-
-                var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true, NoStore = true };
-                _httpClient.DefaultRequestHeaders.Add("X-Request-ID", Guid.NewGuid().ToString());
-                if (provider.AuthType == "goog")
-                    _httpClient.DefaultRequestHeaders.Add("x-goog-api-key", apiKey);
-                else
-                    _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-
-                RhinoApp.WriteLine($"Chained API: {fullUrl} (new view + {previousResults.Count} reference(s))");
-                var response = await _httpClient.PostAsync(fullUrl, content);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    RhinoApp.WriteLine($"Chained API Error ({response.StatusCode}): {await response.Content.ReadAsStringAsync()}");
-                    return null;
-                }
-
-                return ParseGeminiResponse(await response.Content.ReadAsStringAsync());
-            }
-            catch (Exception ex)
-            {
-                RhinoApp.WriteLine($"Chained API Error: {ex.Message}");
+            LastError = null;
+            if (!ValidateRequest(apiKey, currentView))
                 return null;
-            }
-        }
-        #endregion
 
-        #region OpenAI Images API (gpt-image-2)
-        private async Task<Bitmap> GenerateOpenAIAsync(
-            ProviderItem provider, string apiKey, string prompt,
-            Bitmap sourceImage, RenderSettings settings)
-        {
+            var references = new List<Bitmap>();
+            if (previousResults != null)
+                references.AddRange(previousResults.Where(r => r != null));
+            if (referenceImage != null)
+                references.Add(referenceImage);
+
+            var baseUrl = ResolveBaseUrl(provider, settings);
+            var body = BuildPrompt(prompt, settings, references.Count) +
+                       "\n\nKeep the camera position, FOV and the geometry of the scene identical to the previous image. " +
+                       "Only change lighting, materials and atmosphere.";
+
             try
             {
-                byte[] imageBytes;
-                using (var ms = new MemoryStream())
+                using (var requestImage = PrepareSourceImage(currentView, settings))
                 {
-                    sourceImage.Save(ms, ImageFormat.Png);
-                    imageBytes = ms.ToArray();
-                }
+                    var size = ResolveSize(settings);
+                    if (ProviderItem.IsApiYiHost(baseUrl))
+                        return await PostGenerationsAsync(baseUrl, apiKey, body, requestImage, references, settings, size);
 
-                string model = settings.SelectedModel ?? provider.DefaultModel;
-                string fullUrl = $"{provider.BaseUrl.TrimEnd('/')}/v1/images/edits";
-
-                var imageContent = new ByteArrayContent(imageBytes);
-                imageContent.Headers.ContentType =
-                    new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
-
-                using (var formData = new MultipartFormDataContent())
-                {
-                    formData.Add(imageContent, "image[]", "image.png");
-                    formData.Add(new StringContent(prompt), "prompt");
-                    formData.Add(new StringContent(model), "model");
-                    formData.Add(new StringContent("1"), "n");
-
-                    _httpClient.DefaultRequestHeaders.Clear();
-                    _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-
-                    RhinoApp.WriteLine($"Calling OpenAI Images API ({provider.DisplayName}): {fullUrl}");
-                    RhinoApp.WriteLine($"Model: {model}");
-
-                    var response = await _httpClient.PostAsync(fullUrl, formData);
-
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        var errorContent = await response.Content.ReadAsStringAsync();
-                        RhinoApp.WriteLine($"API Error ({response.StatusCode}): {errorContent}");
-                        return null;
-                    }
-
-                    return await ParseOpenAIResponseAsync(await response.Content.ReadAsStringAsync());
+                    return await PostEditsAsync(baseUrl, apiKey, body, requestImage, references, settings, size, null);
                 }
             }
             catch (Exception ex)
             {
-                LogService.Error($"OpenAI API Error: {ex.Message}", ex);
-                RhinoApp.WriteLine($"OpenAI API Error: {ex.Message}");
+                LastError = ex.Message;
+                LogService.Error("GenerateChainedAsync failed", ex);
                 return null;
+            }
+            finally
+            {
+                DisposeAll(references);
             }
         }
 
-        private async Task<Bitmap> ParseOpenAIResponseAsync(string responseContent)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(responseContent))
-                {
-                    RhinoApp.WriteLine("OpenAI-compatible response is empty.");
-                    return null;
-                }
-
-                var trimmed = responseContent.TrimStart();
-                if (trimmed.StartsWith("<"))
-                {
-                    RhinoApp.WriteLine($"OpenAI-compatible response is HTML, not JSON. Check API base URL. Response: {trimmed.Substring(0, Math.Min(300, trimmed.Length))}");
-                    return null;
-                }
-
-                var json = JObject.Parse(responseContent);
-                var data = json["data"];
-                if (data == null || !data.HasValues)
-                {
-                    RhinoApp.WriteLine($"No data in OpenAI response: {responseContent.Substring(0, Math.Min(300, responseContent.Length))}");
-                    return null;
-                }
-
-                var b64 = data[0]?["b64_json"]?.ToString();
-                if (!string.IsNullOrEmpty(b64))
-                {
-                    var commaIndex = b64.IndexOf(',');
-                    if (b64.StartsWith("data:", StringComparison.OrdinalIgnoreCase) && commaIndex >= 0)
-                        b64 = b64.Substring(commaIndex + 1);
-
-                    return BitmapFromBytes(Convert.FromBase64String(b64));
-                }
-
-                var url = data[0]?["url"]?.ToString();
-                if (!string.IsNullOrEmpty(url))
-                    return await LoadImageFromUrlAsync(url);
-
-                RhinoApp.WriteLine("No image found in OpenAI response.");
-                return null;
-            }
-            catch (Exception ex)
-            {
-                RhinoApp.WriteLine($"Parse Error: {ex.Message}");
-                return null;
-            }
-        }
-        #endregion
-
-        #region Mask Edits API
+        /// <summary>蒙版修改：始终 /v1/images/edits + mask，模型为支持精确蒙版的官方模型</summary>
         public async Task<Bitmap> GenerateMaskedEditAsync(
             ProviderItem provider,
             string apiKey,
@@ -875,93 +139,330 @@ namespace AIRenderer.Services
             RenderSettings settings)
         {
             LastError = null;
-            if (provider == null || string.IsNullOrWhiteSpace(apiKey) || sourceImage == null || maskImage == null)
+            if (string.IsNullOrWhiteSpace(apiKey) || sourceImage == null || maskImage == null)
             {
-                LastError = "Mask edit request missing provider, API key, source image, or mask image.";
+                LastError = "Mask edit request missing API key, source image, or mask image.";
+                return null;
+            }
+
+            var baseUrl = ResolveBaseUrl(provider, settings);
+            var constrainedPrompt =
+                "Use the provided mask strictly: only repaint the transparent pixels of the mask on image 1. " +
+                "Preserve the camera, composition, geometry, lighting, materials, and all opaque/unmasked areas as unchanged as possible. " +
+                (prompt ?? "");
+
+            try
+            {
+                SaveMaskDebugImage(maskImage);
+                LogService.Info($"Mask edit payload | source {sourceImage.Width}x{sourceImage.Height} | mask {maskImage.Width}x{maskImage.Height} | transparent {GetTransparentPixelPercent(maskImage):F2}%");
+
+                var size = ResolveSize(settings, ignoreFastMode: true);
+                // 蒙版链路固定使用支持精确 inpainting 的官方模型，不受当前模式影响
+                return await PostEditsAsync(baseUrl, apiKey, constrainedPrompt, sourceImage,
+                    new List<Bitmap>(), settings, size, maskImage, RenderSettings.MaskModel);
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogService.Error("GenerateMaskedEditAsync failed", ex);
+                return null;
+            }
+        }
+
+        // ── 协议 1：API易兼容 Generations（JSON）─────────────────────────
+
+        private async Task<Bitmap> PostGenerationsAsync(
+            string baseUrl, string apiKey, string prompt, Bitmap source,
+            List<Bitmap> references, RenderSettings settings, string size)
+        {
+            var url = ProviderItem.AppendPath(baseUrl, "images/generations");
+            var payload = new JObject
+            {
+                ["model"] = settings?.SelectedModel,
+                ["prompt"] = prompt
+            };
+
+            // 快速出图用的 gpt-image-2.5-all 不接受 size：比例写在提示词里（文档验证过的措辞）
+            if (!string.IsNullOrEmpty(size))
+                payload["size"] = size;
+
+            var images = new JArray();
+            if (source != null)
+                images.Add(ToDataUrl(source));
+            foreach (var reference in references)
+                images.Add(ToDataUrl(reference));
+            if (images.Count > 0)
+                payload["image"] = images;
+
+            LogService.Info($"POST {url} | model={settings?.SelectedModel} | size={size ?? "(none)"} | images={images.Count}");
+
+            using (var request = new HttpRequestMessage(HttpMethod.Post, url))
+            {
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
+                request.Content = new StringContent(payload.ToString(Formatting.None), Encoding.UTF8, "application/json");
+
+                using (var response = await _httpClient.SendAsync(request))
+                {
+                    var content = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        LastError = DescribeError(response.StatusCode.ToString(), content);
+                        LogService.Warn(LastError);
+                        return null;
+                    }
+                    return await ParseImageAsync(content);
+                }
+            }
+        }
+
+        // ── 协议 2：通用 OpenAI Images（/images/edits multipart）─────────
+
+        private async Task<Bitmap> PostEditsAsync(
+            string baseUrl, string apiKey, string prompt, Bitmap source,
+            List<Bitmap> references, RenderSettings settings, string size, Bitmap mask,
+            string modelOverride = null)
+        {
+            var url = ProviderItem.AppendPath(baseUrl, "images/edits");
+            var model = modelOverride ?? settings?.SelectedModel ?? "";
+            var sourceFieldName = settings?.SelectedProviderItem?.ApiFormat == "images_generations" ? "image[]" : "image";
+
+            using (var form = new MultipartFormDataContent())
+            {
+                form.Add(new StringContent(model), "model");
+                form.Add(new StringContent(prompt ?? ""), "prompt");
+                if (!string.IsNullOrEmpty(size))
+                    form.Add(new StringContent(size), "size");
+                form.Add(new StringContent("png"), "output_format");
+
+                AddImagePart(form, source, sourceFieldName, "image.png");
+                for (int i = 0; i < references.Count; i++)
+                    AddImagePart(form, references[i], "image[]", $"reference_{i + 1}.png");
+                if (mask != null)
+                    AddImagePart(form, mask, "mask", "mask.png");
+
+                LogService.Info($"POST {url} | model={model} | size={size ?? "(none)"} | refs={references.Count} | mask={mask != null}");
+
+                using (var request = new HttpRequestMessage(HttpMethod.Post, url))
+                {
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                    request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
+                    request.Content = form;
+
+                    using (var response = await _httpClient.SendAsync(request))
+                    {
+                        var content = await response.Content.ReadAsStringAsync();
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            LastError = DescribeError(response.StatusCode.ToString(), content);
+                            LogService.Warn(LastError);
+                            return null;
+                        }
+                        return await ParseImageAsync(content);
+                    }
+                }
+            }
+        }
+
+        private static void AddImagePart(MultipartFormDataContent form, Bitmap bitmap, string name, string fileName)
+        {
+            if (bitmap == null)
+                return;
+
+            using (var ms = new MemoryStream())
+            {
+                bitmap.Save(ms, ImageFormat.Png);
+                var part = new ByteArrayContent(ms.ToArray());
+                part.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+                form.Add(part, name, fileName);
+            }
+        }
+
+        // ── 响应解析：data[0].b64_json / data[0].url / data URL ───────────
+
+        private async Task<Bitmap> ParseImageAsync(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                LastError = "接口返回为空。";
                 return null;
             }
 
             try
             {
-                var totalWatch = Stopwatch.StartNew();
-                string model = settings.SelectedModel ?? provider.DefaultModel;
-                string fullUrl = $"{provider.BaseUrl.TrimEnd('/')}/v1/images/edits";
-                string size = GetBltImageSize(settings, sourceImage);
-                if (string.IsNullOrWhiteSpace(size))
-                    size = GetOriginalRatioImageSize(sourceImage);
-                if (string.IsNullOrWhiteSpace(size))
-                    size = "1024x1024";
+                var json = JObject.Parse(content);
+                var first = json["data"]?.FirstOrDefault();
 
-                byte[] sourceBytes = BitmapToPngBytes(sourceImage);
-                byte[] maskBytes = BitmapToPngBytes(maskImage);
-                string constrainedPrompt =
-                    "Use the provided mask strictly: only repaint the transparent pixels of the mask on image 1. " +
-                    "Preserve the camera, composition, geometry, lighting, materials, and all opaque/unmasked areas as unchanged as possible. " +
-                    prompt;
-                SaveMaskDebugImage(maskImage);
-                LogService.Info($"Mask edit payload | Source: {sourceImage.Width}x{sourceImage.Height} | Mask: {maskImage.Width}x{maskImage.Height} | Transparent: {GetTransparentPixelPercent(maskImage):F2}%");
+                var b64 = first?["b64_json"]?.ToString();
+                if (!string.IsNullOrWhiteSpace(b64))
+                    return DecodeBase64(b64);
 
-                using (var formData = new MultipartFormDataContent())
-                {
-                    string imageFieldName = provider.ApiFormat == "images_generations" ? "image[]" : "image";
+                var url = first?["url"]?.ToString();
+                if (!string.IsNullOrWhiteSpace(url))
+                    return await DownloadImageAsync(url);
 
-                    var imageContent = new ByteArrayContent(sourceBytes);
-                    imageContent.Headers.ContentType = new MediaTypeHeaderValue("image/png");
-                    formData.Add(imageContent, imageFieldName, "image.png");
-
-                    var maskContent = new ByteArrayContent(maskBytes);
-                    maskContent.Headers.ContentType = new MediaTypeHeaderValue("image/png");
-                    formData.Add(maskContent, "mask", "mask.png");
-
-                    formData.Add(new StringContent(constrainedPrompt), "prompt");
-                    formData.Add(new StringContent(model), "model");
-                    formData.Add(new StringContent(size), "size");
-                    formData.Add(new StringContent("low"), "quality");
-                    formData.Add(new StringContent("png"), "output_format");
-
-                    _httpClient.DefaultRequestHeaders.Clear();
-                    _httpClient.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
-                    _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-
-                    RhinoApp.WriteLine($"Calling Mask Edits API ({provider.DisplayName}): {fullUrl}");
-                    RhinoApp.WriteLine($"Model: {model}, Mask edit");
-                    LogService.Info($"Mask edit request | Provider: {provider.DisplayName} | Model: {model} | Size: {size}");
-
-                    var response = await _httpClient.PostAsync(fullUrl, formData);
-                    LogService.Info($"Timing | Mask edit HTTP wait+upload: {totalWatch.ElapsedMilliseconds} ms");
-
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        var errorContent = await response.Content.ReadAsStringAsync();
-                        LastError = $"Mask Edit API Error ({response.StatusCode}): {errorContent}";
-                        RhinoApp.WriteLine($"Mask Edit API Error ({response.StatusCode}): {errorContent}");
-                        LogService.Warn($"Mask Edit API Error ({response.StatusCode}): {errorContent}");
-                        return null;
-                    }
-
-                    var responseContent = await response.Content.ReadAsStringAsync();
-                    var result = await ParseOpenAIResponseAsync(responseContent);
-                    LogService.Info($"Timing | Mask edit total: {totalWatch.ElapsedMilliseconds} ms");
-                    return result;
-                }
+                LastError = "响应里没有 b64_json / url 字段。";
+                LogService.Warn($"Unexpected response: {Truncate(content, 400)}");
+                return null;
             }
-            catch (Exception ex)
+            catch (JsonException)
             {
-                LastError = $"Mask edit API Error: {ex.Message}";
-                LogService.Error($"Mask edit API Error: {ex.Message}", ex);
-                RhinoApp.WriteLine($"Mask edit API Error: {ex.Message}");
+                if (content.TrimStart().StartsWith("data:image", StringComparison.OrdinalIgnoreCase))
+                    return DecodeBase64(content);
+
+                LastError = "响应不是合法 JSON。";
+                LogService.Warn($"Non-JSON response: {Truncate(content, 400)}");
                 return null;
             }
         }
 
-        private static byte[] BitmapToPngBytes(Bitmap bitmap)
+        private static Bitmap DecodeBase64(string value)
+        {
+            var raw = value.Trim();
+            var comma = raw.IndexOf(",", StringComparison.Ordinal);
+            if (raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase) && comma > 0)
+                raw = raw.Substring(comma + 1);
+
+            return ImageUtil.FromBytes(Convert.FromBase64String(raw));
+        }
+
+        private async Task<Bitmap> DownloadImageAsync(string url)
+        {
+            var response = await DownloadClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                LastError = $"下载结果图片失败：{response.StatusCode}";
+                return null;
+            }
+            var bytes = await response.Content.ReadAsByteArrayAsync();
+            return ImageUtil.FromBytes(bytes);
+        }
+
+        // ── 参数与图像准备 ────────────────────────────────────────────────
+
+        private static bool ValidateRequest(string apiKey, Bitmap sourceImage)
+        {
+            // 参数校验：具体错误信息由调用方从 LastError 读取
+            return !string.IsNullOrWhiteSpace(apiKey) && sourceImage != null;
+        }
+
+        private static string ResolveBaseUrl(ProviderItem provider, RenderSettings settings)
+        {
+            var raw = settings != null && !string.IsNullOrWhiteSpace(settings.BaseUrl)
+                ? settings.BaseUrl
+                : provider?.BaseUrl;
+            return ProviderItem.NormalizeBaseUrl(raw);
+        }
+
+        private static List<Bitmap> CollectReferences(Bitmap referenceImage, IReadOnlyList<Bitmap> referenceImages)
+        {
+            var list = new List<Bitmap>();
+            if (referenceImage != null)
+                list.Add(referenceImage);
+            if (referenceImages != null)
+                list.AddRange(referenceImages.Where(r => r != null && !ReferenceEquals(r, referenceImage)));
+            return list.Take(15).ToList();
+        }
+
+        private static void DisposeAll(IEnumerable<Bitmap> bitmaps)
+        {
+            if (bitmaps == null)
+                return;
+            foreach (var bitmap in bitmaps)
+                bitmap?.Dispose();
+        }
+
+        /// <summary>系统提示词 + 多图顺序说明 +（快速出图）比例措辞</summary>
+        private static string BuildPrompt(string prompt, RenderSettings settings, int referenceCount)
+        {
+            var body = prompt ?? "";
+
+            if (settings != null && !string.IsNullOrWhiteSpace(settings.SystemPrompt))
+                body = $"{settings.SystemPrompt}\n\n{body}";
+
+            if (referenceCount > 0)
+            {
+                var labels = string.Join(", ", Enumerable.Range(2, referenceCount).Select(i => $"image {i}"));
+                var zhLabels = string.Join(", ", Enumerable.Range(2, referenceCount).Select(i => $"图{i}=image {i}"));
+                body += $"\n\nImage order: image 1 / 图1 is the source scene. {labels} are reference images only ({zhLabels}). " +
+                        "Follow image 1 for camera, geometry and layout; use the reference images only for the visual attributes named in the prompt.";
+            }
+
+            // 快速出图没有 size 参数，按官方文档的做法把比例写进提示词
+            if (settings != null && settings.IsFastMode)
+                body += $"\n\n输出比例：{RatioPhrasing(settings.ResolvedRatio)}";
+
+            return body;
+        }
+
+        /// <summary>文档里验证过的“提示词措辞 → 实际分辨率”措辞</summary>
+        private static string RatioPhrasing(string ratioKey)
+        {
+            switch (ratioKey)
+            {
+                case "16:9": return "横版 16:9";
+                case "9:16": return "竖屏 9:16";
+                case "4:3": return "4:3";
+                case "3:2": return "3:2 尺寸";
+                case "1:1": return "1:1 square composition";
+                default: return "3:2 尺寸";
+            }
+        }
+
+        /// <summary>尺寸：快速出图不传 size；标准模式 / 蒙版链路传当前档位的实际像素</summary>
+        private static string ResolveSize(RenderSettings settings, bool ignoreFastMode = false)
+        {
+            if (settings == null)
+                return null;
+            if (settings.IsFastMode && !ignoreFastMode)
+                return null;
+
+            var (w, h) = ImageSizeTable.Pixels(settings.ResolvedRatio, settings.SelectedImageSize);
+            return $"{w}x{h}";
+        }
+
+        private static Bitmap PrepareSourceImage(Bitmap sourceImage, RenderSettings settings)
+        {
+            if (sourceImage == null)
+                return null;
+
+            int maxEdge;
+            switch (settings?.SelectedSourceImageMode)
+            {
+                case "speed": maxEdge = 1024; break;
+                case "quality": maxEdge = 0; break;
+                default: maxEdge = 1536; break;
+            }
+
+            int currentMaxEdge = Math.Max(sourceImage.Width, sourceImage.Height);
+            if (maxEdge <= 0 || currentMaxEdge <= maxEdge)
+                return new Bitmap(sourceImage);
+
+            double scale = (double)maxEdge / currentMaxEdge;
+            int width = Math.Max(16, (int)Math.Round(sourceImage.Width * scale));
+            int height = Math.Max(16, (int)Math.Round(sourceImage.Height * scale));
+
+            var resized = new Bitmap(width, height, PixelFormat.Format24bppRgb);
+            resized.SetResolution(sourceImage.HorizontalResolution, sourceImage.VerticalResolution);
+            using (var graphics = Graphics.FromImage(resized))
+            {
+                graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                graphics.DrawImage(sourceImage, 0, 0, width, height);
+            }
+            LogService.Info($"Compressed source image: {sourceImage.Width}x{sourceImage.Height} -> {width}x{height}");
+            return resized;
+        }
+
+        private static string ToDataUrl(Bitmap bitmap)
         {
             using (var ms = new MemoryStream())
             {
                 bitmap.Save(ms, ImageFormat.Png);
-                return ms.ToArray();
+                return "data:image/png;base64," + Convert.ToBase64String(ms.ToArray());
             }
         }
+
+        // ── 蒙版诊断（沿用既有行为）────────────────────────────────────────
 
         private static void SaveMaskDebugImage(Bitmap maskImage)
         {
@@ -972,39 +473,11 @@ namespace AIRenderer.Services
                 var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
                 var path = Path.Combine(folder, $"mask_{stamp}.png");
                 maskImage.Save(path, ImageFormat.Png);
-
-                var previewPath = Path.Combine(folder, $"mask_{stamp}_preview.png");
-                SaveMaskPreview(maskImage, previewPath);
-
                 LogService.Info($"Mask debug image saved: {path}");
-                LogService.Info($"Mask preview image saved: {previewPath}");
             }
             catch (Exception ex)
             {
                 LogService.Warn($"Failed to save mask debug image: {ex.Message}");
-            }
-        }
-
-        private static void SaveMaskPreview(Bitmap maskImage, string path)
-        {
-            using (var preview = new Bitmap(maskImage.Width, maskImage.Height, PixelFormat.Format24bppRgb))
-            using (var graphics = Graphics.FromImage(preview))
-            using (var keepBrush = new SolidBrush(Color.White))
-            using (var editBrush = new SolidBrush(Color.Red))
-            {
-                graphics.Clear(Color.White);
-
-                for (int y = 0; y < maskImage.Height; y++)
-                {
-                    for (int x = 0; x < maskImage.Width; x++)
-                    {
-                        var c = maskImage.GetPixel(x, y);
-                        if (c.A < 128)
-                            preview.SetPixel(x, y, Color.Red);
-                    }
-                }
-
-                preview.Save(path, ImageFormat.Png);
             }
         }
 
@@ -1026,260 +499,13 @@ namespace AIRenderer.Services
                         transparent++;
                 }
             }
-
             return sampled == 0 ? 0 : transparent * 100.0 / sampled;
         }
-        #endregion
 
-        #region OpenAI Images Generations API
-        private async Task<Bitmap> GenerateImagesGenerationsAsync(
-            ProviderItem provider, string apiKey, string prompt, Bitmap sourceImage, RenderSettings settings,
-            IReadOnlyList<Bitmap> referenceImages = null)
-        {
-            try
-            {
-                var totalWatch = Stopwatch.StartNew();
-                var stepWatch = Stopwatch.StartNew();
-                string model = settings.SelectedModel ?? provider.DefaultModel;
-                string fullUrl = $"{provider.BaseUrl.TrimEnd('/')}/v1/images/generations";
-                string size = GetBltImageSize(settings, sourceImage);
-                bool isApiYiAll = model.Equals("gpt-image-2-all", StringComparison.OrdinalIgnoreCase);
-                var imageBase64List = new JArray();
-                using (var requestImage = PrepareSourceImageForGenerations(sourceImage, settings))
-                {
-                    if (requestImage != null)
-                        imageBase64List.Add(ScreenCapture.ToBase64(requestImage, ImageFormat.Png));
-                }
+        private static string DescribeError(string status, string content)
+            => $"接口返回 {status}：{Truncate(content, 300)}";
 
-                if (referenceImages != null)
-                {
-                    foreach (var reference in referenceImages.Where(r => r != null).Take(15))
-                    {
-                        using (var requestReference = PrepareSourceImageForGenerations(reference, settings))
-                        {
-                            if (requestReference != null)
-                                imageBase64List.Add(ScreenCapture.ToBase64(requestReference, ImageFormat.Png));
-                        }
-                    }
-                }
-                LogService.Info($"Timing | GPT source prepare+encode: {stepWatch.ElapsedMilliseconds} ms");
-                stepWatch.Restart();
-
-                if (imageBase64List.Count > 1)
-                {
-                    var labels = string.Join(", ", Enumerable.Range(2, imageBase64List.Count - 1).Select(i => $"image {i}"));
-                    var zhLabels = string.Join(", ", Enumerable.Range(2, imageBase64List.Count - 1).Select(i => $"图{i}=image {i}"));
-                    prompt = $"{prompt}\n\nImage order for this request: image 1 / 图1 is the source scene to edit/render from. {labels} are reference images only ({zhLabels}). Follow image 1 / 图1 for camera, geometry, and layout unless the user explicitly says otherwise. Use the reference images for the specific visual attributes named in the prompt, such as material, color, lighting, furniture style, product style, or mood.";
-                }
-
-                var payload = new JObject
-                {
-                    ["model"] = model,
-                    ["prompt"] = isApiYiAll
-                        ? $"{prompt}\n\nOutput aspect/size target: {size}. Do not return text; generate one image."
-                        : prompt
-                };
-
-                if (!isApiYiAll)
-                    payload["size"] = size;
-
-                if (imageBase64List.Count > 0)
-                    payload["image"] = imageBase64List;
-
-                var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
-                LogService.Info($"Timing | GPT payload serialize: {stepWatch.ElapsedMilliseconds} ms");
-                stepWatch.Restart();
-
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
-                _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-
-                RhinoApp.WriteLine($"Calling Images Generations API ({provider.DisplayName}): {fullUrl}");
-                RhinoApp.WriteLine($"Model: {model}, Size: {size}");
-
-                var response = await _httpClient.PostAsync(fullUrl, content);
-                LogService.Info($"Timing | GPT HTTP wait: {stepWatch.ElapsedMilliseconds} ms");
-                stepWatch.Restart();
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    RhinoApp.WriteLine($"API Error ({response.StatusCode}): {errorContent}");
-                    return null;
-                }
-
-                var responseBody = await response.Content.ReadAsStringAsync();
-                LogService.Info($"Timing | GPT response read: {stepWatch.ElapsedMilliseconds} ms");
-                stepWatch.Restart();
-
-                var parsed = await ParseOpenAIResponseAsync(responseBody);
-                LogService.Info($"Timing | GPT response parse/download: {stepWatch.ElapsedMilliseconds} ms");
-                LogService.Info($"Timing | GPT service total: {totalWatch.ElapsedMilliseconds} ms");
-                return parsed;
-            }
-            catch (Exception ex)
-            {
-                LogService.Error($"Images Generations API Error: {ex.Message}", ex);
-                RhinoApp.WriteLine($"Images Generations API Error: {ex.Message}");
-                return null;
-            }
-        }
-
-        private string GetBltImageSize(RenderSettings settings, Bitmap sourceImage = null)
-        {
-            string ratio = settings.SelectedAspectRatio?.Ratio ?? "";
-            if (string.IsNullOrEmpty(ratio) && sourceImage != null)
-                return GetOriginalRatioImageSize(sourceImage);
-
-            switch (ratio)
-            {
-                case "16:9":
-                    return "1024x576";
-                case "9:16":
-                    return "576x1024";
-                case "4:3":
-                    return "1024x768";
-                case "3:2":
-                    return "1024x768";
-                case "21:9":
-                    return "1344x576";
-                default:
-                    return "1024x1024";
-            }
-        }
-
-        private string GetOriginalRatioImageSize(Bitmap sourceImage)
-        {
-            const int targetLongEdge = 1536;
-            double scale = targetLongEdge / (double)Math.Max(sourceImage.Width, sourceImage.Height);
-            int width = RoundToMultipleOf16((int)Math.Round(sourceImage.Width * scale));
-            int height = RoundToMultipleOf16((int)Math.Round(sourceImage.Height * scale));
-
-            int pixels = width * height;
-            if (pixels < 655360)
-            {
-                double minScale = Math.Sqrt(655360.0 / pixels);
-                width = RoundToMultipleOf16((int)Math.Ceiling(width * minScale));
-                height = RoundToMultipleOf16((int)Math.Ceiling(height * minScale));
-            }
-
-            return $"{width}x{height}";
-        }
-
-        private int RoundToMultipleOf16(int value)
-        {
-            return Math.Max(16, (int)Math.Round(value / 16.0) * 16);
-        }
-
-        private Bitmap PrepareSourceImageForGenerations(Bitmap sourceImage, RenderSettings settings)
-        {
-            if (sourceImage == null)
-                return null;
-
-            int maxEdge = GetSourceImageMaxEdge(settings);
-            int currentMaxEdge = Math.Max(sourceImage.Width, sourceImage.Height);
-            if (maxEdge <= 0 || currentMaxEdge <= maxEdge)
-                return (Bitmap)sourceImage.Clone();
-
-            double scale = maxEdge / (double)currentMaxEdge;
-            int width = Math.Max(1, (int)Math.Round(sourceImage.Width * scale));
-            int height = Math.Max(1, (int)Math.Round(sourceImage.Height * scale));
-
-            var resized = new Bitmap(width, height);
-            resized.SetResolution(sourceImage.HorizontalResolution, sourceImage.VerticalResolution);
-            using (var graphics = Graphics.FromImage(resized))
-            {
-                graphics.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
-                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
-                graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
-                graphics.DrawImage(sourceImage, 0, 0, width, height);
-            }
-
-            RhinoApp.WriteLine($"Compressed source image for GPT: {sourceImage.Width}x{sourceImage.Height} -> {width}x{height}");
-            return resized;
-        }
-
-        private int GetSourceImageMaxEdge(RenderSettings settings)
-        {
-            switch (settings?.SelectedSourceImageMode)
-            {
-                case "speed":
-                    return 1024;
-                case "quality":
-                    return 0;
-                default:
-                    return 1536;
-            }
-        }
-        #endregion
-
-        #region Custom Provider (Gemini-compatible)
-        private async Task<Bitmap> GenerateCustomAsync(
-            ProviderItem provider, string apiKey, string prompt,
-            Bitmap sourceImage, RenderSettings settings,
-            Bitmap referenceImage = null)
-        {
-            try
-            {
-                string model = settings.SelectedModel ?? provider.DefaultModel;
-                string fullUrl = $"{provider.BaseUrl.TrimEnd('/')}/v1beta/models/{model}:generateContent";
-
-                string aspectRatio = settings.SelectedAspectRatio?.Ratio ?? "";
-                string imageSize = settings.SelectedImageSize ?? "1K";
-                string jsonImageConfig = string.IsNullOrEmpty(aspectRatio)
-                    ? $"{{\"imageSize\":\"{imageSize}\"}}"
-                    : $"{{\"aspectRatio\":\"{aspectRatio}\",\"imageSize\":\"{imageSize}\"}}";
-
-                // parts: text → source view → reference image (if any)
-                var parts = new List<object>();
-                string textPrompt = referenceImage != null
-                    ? prompt + "\n\nA style reference image is also provided — match its lighting, atmosphere, and visual style."
-                    : prompt;
-                parts.Add(new { text = textPrompt });
-                parts.Add(new { inline_data = new { mime_type = "image/png", data = ScreenCapture.ToBase64(sourceImage, ImageFormat.Png) } });
-                if (referenceImage != null)
-                    parts.Add(new { inline_data = new { mime_type = "image/png", data = ScreenCapture.ToBase64(referenceImage, ImageFormat.Png) } });
-
-                var payload = new
-                {
-                    contents = new[] { new { role = "user", parts = parts.ToArray() } },
-                    tools = new[] { new { google_search = new object() } },
-                    generationConfig = new
-                    {
-                        responseModalities = new[] { "TEXT", "IMAGE" },
-                        imageConfig = JsonConvert.DeserializeObject(jsonImageConfig)
-                    }
-                };
-
-                var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
-                _httpClient.DefaultRequestHeaders.Add("X-Request-ID", Guid.NewGuid().ToString());
-                if (provider.AuthType == "goog")
-                    _httpClient.DefaultRequestHeaders.Add("x-goog-api-key", apiKey);
-                else
-                    _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-
-                RhinoApp.WriteLine($"Calling Custom API ({provider.DisplayName}): {fullUrl}");
-                var response = await _httpClient.PostAsync(fullUrl, content);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    RhinoApp.WriteLine($"API Error ({response.StatusCode}): {errorContent}");
-                    return null;
-                }
-
-                return ParseGeminiResponse(await response.Content.ReadAsStringAsync());
-            }
-            catch (Exception ex)
-            {
-                LogService.Error($"Custom API Error: {ex.Message}", ex);
-                RhinoApp.WriteLine($"Custom API Error: {ex.Message}");
-                return null;
-            }
-        }
-        #endregion
+        private static string Truncate(string value, int max)
+            => string.IsNullOrEmpty(value) || value.Length <= max ? value : value.Substring(0, max) + "…";
     }
 }

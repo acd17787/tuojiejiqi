@@ -1,17 +1,15 @@
+using System;
 using System.Collections.Generic;
 
 namespace AIRenderer.Models
 {
+    /// <summary>
+    /// 只保留 API易 / 通用 OpenAI Images 兼容生图服务商。
+    /// Google / Gemini / Vertex 相关服务商已彻底移除（运行时不再有任何对应调用）。
+    /// </summary>
     public enum ApiProvider
     {
-        Gemini = 0,
-        BltAI = 1,
-        BltGenerations = 2,
-        BltFlux = 2,
-        BltResponses = 3,
-        BltChat = 4,
-        VertexKey = 5,
-        VertexADC = 6
+        ApiYi = 0
     }
 
     public class CustomProviderConfig
@@ -20,7 +18,8 @@ namespace AIRenderer.Models
         public string DisplayName { get; set; } = "";
         public string BaseUrl { get; set; } = "";
         public string AuthType { get; set; } = "bearer";
-        public string ApiFormat { get; set; } = "gemini";
+        /// <summary>openai = 通用 OpenAI Images（/images/edits）；images_generations = API易兼容 Generations</summary>
+        public string ApiFormat { get; set; } = "openai";
         public List<string> Models { get; set; } = new List<string>();
         public string DefaultModel { get; set; } = "";
     }
@@ -34,39 +33,15 @@ namespace AIRenderer.Models
         public string DefaultModel { get; set; }
         public bool IsCustom { get; set; }
         public string AuthType { get; set; } = "bearer";
-        public string ApiFormat { get; set; } = "gemini";
+        /// <summary>openai = 通用 OpenAI Images；images_generations = API易兼容 Generations</summary>
+        public string ApiFormat { get; set; } = "openai";
         public string ApiKeyUrl { get; set; }
         public ApiProvider? BuiltInProvider { get; set; }
 
-        public static string NormalizeBaseUrl(string baseUrl)
-        {
-            if (string.IsNullOrWhiteSpace(baseUrl))
-                return "";
-
-            var url = baseUrl.Trim();
-            if (System.Uri.TryCreate(url, System.UriKind.Absolute, out var uri) &&
-                uri.Host.Equals("api.apiyi.com", System.StringComparison.OrdinalIgnoreCase))
-            {
-                return $"{uri.Scheme}://{uri.Host}";
-            }
-
-            while (url.EndsWith("/"))
-                url = url.Substring(0, url.Length - 1);
-
-            // Users often paste "https://host/v1". Our code appends "/v1/..." itself.
-            if (url.EndsWith("/v1", System.StringComparison.OrdinalIgnoreCase))
-                url = url.Substring(0, url.Length - 3);
-            if (url.EndsWith("/v1beta", System.StringComparison.OrdinalIgnoreCase))
-                url = url.Substring(0, url.Length - 6);
-
-            while (url.EndsWith("/"))
-                url = url.Substring(0, url.Length - 1);
-
-            return url;
-        }
-
         public static ProviderItem FromBuiltIn(ApiProviderConfig config)
         {
+            if (config == null)
+                return null;
             return new ProviderItem
             {
                 Id = config.Provider.ToString(),
@@ -96,10 +71,72 @@ namespace AIRenderer.Models
                     : (models.Count > 0 ? models[0] : ""),
                 IsCustom = true,
                 AuthType = config.AuthType ?? "bearer",
-                ApiFormat = config.ApiFormat ?? "gemini",
+                ApiFormat = config.ApiFormat ?? "openai",
                 ApiKeyUrl = null,
                 BuiltInProvider = null
             };
+        }
+
+        public const string ApiYiDefaultBaseUrl = "https://api.apiyi.com/v1";
+        public const string ApiYiDefaultFastModel = "gpt-image-2.5-all";
+        public const string ApiYiDefaultStdModel = "gpt-image-2.5-vip";
+
+        /// <summary>API易网关域名（走 Generations 兼容协议）</summary>
+        public static bool IsApiYiHost(string baseUrl)
+        {
+            try
+            {
+                var host = new Uri(EnsureScheme(baseUrl)).Host;
+                return host.Equals("api.apiyi.com", StringComparison.OrdinalIgnoreCase) ||
+                       host.Equals("vip.apiyi.com", StringComparison.OrdinalIgnoreCase) ||
+                       host.Equals("b.apiyi.com", StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string EnsureScheme(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+                return "https://api.apiyi.com";
+            return url.Contains("://") ? url : "https://" + url;
+        }
+
+        /// <summary>
+        /// 统一 Base URL：允许用户填 https://api.apiyi.com 或 https://api.apiyi.com/v1，
+        /// 也允许结尾带斜杠；最终拼出的请求地址不允许出现 /v1/v1。
+        /// </summary>
+        public static string NormalizeBaseUrl(string baseUrl)
+        {
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                return "";
+
+            var url = baseUrl.Trim();
+            if (!url.Contains("://"))
+                url = "https://" + url;
+
+            while (url.EndsWith("/"))
+                url = url.Substring(0, url.Length - 1);
+
+            // 用户既可能只填主机，也可能带上 /v1；这里统一保留 /v1 后缀，
+            // 拼接时用 AppendPath 判断，避免出现 /v1/v1。
+            if (url.EndsWith("/v1/v1", StringComparison.OrdinalIgnoreCase))
+                url = url.Substring(0, url.Length - 3);
+
+            return url;
+        }
+
+        /// <summary>把 path（如 "images/generations"）拼到 BaseUrl 上，自动处理 /v1</summary>
+        public static string AppendPath(string baseUrl, string path)
+        {
+            var root = NormalizeBaseUrl(baseUrl);
+            if (string.IsNullOrEmpty(root))
+                return path;
+            if (!root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+                root += "/v1";
+            return root + "/" + path.TrimStart('/');
         }
     }
 
@@ -112,109 +149,37 @@ namespace AIRenderer.Models
         public string DefaultModel { get; set; }
         public Dictionary<string, string> ModelDisplayNames { get; set; }
         public string ApiKeyUrl { get; set; }
-        public string ApiFormat { get; set; } = "gemini";
+        public string ApiFormat { get; set; } = "images_generations";
 
         public static ApiProviderConfig GetConfig(ApiProvider provider)
         {
-            switch (provider)
+            return new ApiProviderConfig
             {
-                case ApiProvider.BltAI:
-                    return new ApiProviderConfig
-                    {
-                        Provider = ApiProvider.BltAI,
-                        DisplayName = "Bltcy Nano Banana",
-                        BaseUrl = "https://api.bltcy.ai",
-                        DefaultModel = "gemini-3.1-flash-image-preview",
-                        ApiFormat = "gemini",
-                        Models = new List<string>
-                        {
-                            "gemini-3.1-flash-image-preview",
-                            "gemini-3-pro-image-preview",
-                            "gemini-2.5-flash-image"
-                        },
-                        ModelDisplayNames = new Dictionary<string, string>
-                        {
-                            { "gemini-3.1-flash-image-preview", "Nano Banana 3.1 Flash" },
-                            { "gemini-3-pro-image-preview", "Nano Banana Pro" },
-                            { "gemini-2.5-flash-image", "Nano Banana" }
-                        },
-                        ApiKeyUrl = "https://api.bltcy.ai/"
-                    };
-                case ApiProvider.BltGenerations:
-                    return new ApiProviderConfig
-                    {
-                        Provider = ApiProvider.BltGenerations,
-                        DisplayName = "GPT",
-                        BaseUrl = "https://api.bltcy.ai",
-                        DefaultModel = "flux-kontext-pro",
-                        ApiFormat = "images_generations",
-                        Models = new List<string>
-                        {
-                            "gpt-image-2-all",
-                            "gpt-image-2-vip",
-                            "gpt-image-2",
-                            "flux-kontext-pro",
-                            "flux-kontext-max",
-                            "qwen-image-edit",
-                            "qwen-image-edit-2509"
-                        },
-                        ModelDisplayNames = new Dictionary<string, string>
-                        {
-                            { "gpt-image-2-all", "GPT Image 2 All" },
-                            { "gpt-image-2-vip", "GPT Image 2 VIP" },
-                            { "gpt-image-2", "GPT Image 2" },
-                            { "flux-kontext-pro", "Flux Kontext Pro" },
-                            { "flux-kontext-max", "Flux Kontext Max" },
-                            { "qwen-image-edit", "Qwen Image Edit" },
-                            { "qwen-image-edit-2509", "Qwen Image Edit 2509" }
-                        },
-                        ApiKeyUrl = "https://api.bltcy.ai/"
-                    };
-                case ApiProvider.BltResponses:
-                    return new ApiProviderConfig
-                    {
-                        Provider = ApiProvider.BltResponses,
-                        DisplayName = "Bltcy Responses",
-                        BaseUrl = "https://api.bltcy.ai",
-                        DefaultModel = "gpt-4.1",
-                        ApiFormat = "responses",
-                        Models = new List<string> { "gpt-4.1", "gpt-4.1-mini", "o3-pro", "codex-mini-latest" },
-                        ModelDisplayNames = new Dictionary<string, string>(),
-                        ApiKeyUrl = "https://api.bltcy.ai/"
-                    };
-                case ApiProvider.BltChat:
-                    return new ApiProviderConfig
-                    {
-                        Provider = ApiProvider.BltChat,
-                        DisplayName = "Bltcy Chat",
-                        BaseUrl = "https://api.bltcy.ai",
-                        DefaultModel = "gpt-4.1",
-                        ApiFormat = "chat",
-                        Models = new List<string> { "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini" },
-                        ModelDisplayNames = new Dictionary<string, string>(),
-                        ApiKeyUrl = "https://api.bltcy.ai/"
-                    };
-                default:
-                    return null;
-            }
+                Provider = ApiProvider.ApiYi,
+                DisplayName = "API易",
+                BaseUrl = ProviderItem.ApiYiDefaultBaseUrl,
+                DefaultModel = ProviderItem.ApiYiDefaultStdModel,
+                ApiFormat = "images_generations",
+                Models = new List<string>
+                {
+                    ProviderItem.ApiYiDefaultFastModel,
+                    ProviderItem.ApiYiDefaultStdModel,
+                    "gpt-image-2.5-sunburst"
+                },
+                ModelDisplayNames = new Dictionary<string, string>
+                {
+                    { ProviderItem.ApiYiDefaultFastModel, "GPT Image 2.5 All（快速）" },
+                    { ProviderItem.ApiYiDefaultStdModel, "GPT Image 2.5 VIP（标准）" },
+                    { "gpt-image-2.5-sunburst", "GPT Image 2.5 Sunburst（蒙版）" }
+                },
+                ApiKeyUrl = "https://api.apiyi.com/"
+            };
         }
 
         public static List<ApiProviderConfig> GetAllProviders()
-        {
-            return new List<ApiProviderConfig>
-            {
-                GetConfig(ApiProvider.BltAI),
-                GetConfig(ApiProvider.BltGenerations)
-            };
-        }
+            => new List<ApiProviderConfig> { GetConfig(ApiProvider.ApiYi) };
 
         public static List<ProviderItem> GetAllProviderItems()
-        {
-            return new List<ProviderItem>
-            {
-                ProviderItem.FromBuiltIn(GetConfig(ApiProvider.BltAI)),
-                ProviderItem.FromBuiltIn(GetConfig(ApiProvider.BltGenerations))
-            };
-        }
+            => new List<ProviderItem> { ProviderItem.FromBuiltIn(GetConfig(ApiProvider.ApiYi)) };
     }
 }

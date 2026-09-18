@@ -1,272 +1,326 @@
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
+using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Windows.Media.Imaging;
 
 namespace AIRenderer.Models
 {
+    /// <summary>
+    /// 渲染设置。只服务 API易 / 通用 OpenAI Images 两类协议，
+    /// 已彻底移除 Google / Gemini / Vertex 相关字段（旧 json 里的字段读取时被忽略）。
+    /// </summary>
     public class RenderSettings : INotifyPropertyChanged
     {
-        private ApiProvider _selectedProvider = ApiProvider.BltAI;
+        private string _baseUrl = ProviderItem.ApiYiDefaultBaseUrl;
         private string _apiKey = "";
-        private string _apiUrl = "";
+        private string _fastModel = ProviderItem.ApiYiDefaultFastModel;
+        private string _stdModel = ProviderItem.ApiYiDefaultStdModel;
+        private bool _isFastMode = true;
+        private bool _autoSaveHistory = true;
         private string _prompt = "";
         private string _systemPrompt = "This is a render image. Do not change the camera position or FOV. Maintain the structural integrity and perspective consistency of all objects in the scene.";
-        private string _selectedModel = "gemini-3.1-flash-image-preview";
-
         private int _width = 512;
         private int _height = 512;
-
-        // Source image dimensions (from capture)
-        private int _sourceWidth = 0;
-        private int _sourceHeight = 0;
-
-        // Vertex AI specific settings
-        private string _vertexProject = "";
-        private string _vertexLocation = "us-central1";
-
-        // Available providers
-        public List<ApiProviderConfig> AvailableProviders { get; } = ApiProviderConfig.GetAllProviders();
-
-        // Current provider config
-        private ApiProviderConfig _currentProviderConfig;
-
-        // Unified provider item (supports both built-in and custom)
+        private int _sourceWidth;
+        private int _sourceHeight;
+        private AspectRatio _selectedAspectRatio;
+        private string _selectedImageSize = "1K";
         private ProviderItem _selectedProviderItem;
+
+        /// <summary>蒙版链路内部固定使用的模型（支持精确 inpainting），界面不展示、不可编辑</summary>
+        public const string MaskModel = "gpt-image-2.5-sunburst";
+
+        public RenderSettings()
+        {
+            _selectedProviderItem = ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi));
+            RefreshDerived();
+        }
+
+        // ── 中转站 ────────────────────────────────────────────────────────
+
+        public string BaseUrl
+        {
+            get => _baseUrl;
+            set { _baseUrl = value ?? ""; OnPropertyChanged(); OnPropertyChanged(nameof(ApiUrl)); }
+        }
+
+        /// <summary>兼容旧绑定名</summary>
+        public string ApiUrl
+        {
+            get => _baseUrl;
+            set => BaseUrl = value;
+        }
+
+        public string ApiKey
+        {
+            get => _apiKey;
+            set { _apiKey = value ?? ""; OnPropertyChanged(); }
+        }
+
+        // ── 模型名（只有点「保存模型设置」才生效，见 ViewModel.SaveModelSettings）──
+
+        public string FastModel
+        {
+            get => _fastModel;
+            set
+            {
+                _fastModel = string.IsNullOrWhiteSpace(value) ? ProviderItem.ApiYiDefaultFastModel : value.Trim();
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(SelectedModel));
+            }
+        }
+
+        public string StdModel
+        {
+            get => _stdModel;
+            set
+            {
+                _stdModel = string.IsNullOrWhiteSpace(value) ? ProviderItem.ApiYiDefaultStdModel : value.Trim();
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(SelectedModel));
+            }
+        }
+
+        /// <summary>有效模型：快速出图→快速模型；标准模式→标准模型；启用蒙版→支持精确蒙版的官方模型</summary>
+        public string SelectedModel
+        {
+            get => IsMaskEditing || IsMaskApplied ? MaskModel
+                : IsFastMode ? FastModel
+                : StdModel;
+            // 兼容旧代码：写入时落到当前模式对应的模型名上
+            set
+            {
+                if (IsFastMode) FastModel = value;
+                else StdModel = value;
+            }
+        }
+
+        // ── 设置弹层里的模型名编辑框：只有点「保存模型设置」才提交 ──────────
+
+        private string _pendingFastModel;
+        private string _pendingStdModel;
+
+        public string PendingFastModel
+        {
+            get => _pendingFastModel ?? FastModel;
+            set { _pendingFastModel = value ?? ""; OnPropertyChanged(); }
+        }
+
+        public string PendingStdModel
+        {
+            get => _pendingStdModel ?? StdModel;
+            set { _pendingStdModel = value ?? ""; OnPropertyChanged(); }
+        }
+
+        /// <summary>
+        /// 提交模型名：空值回退默认模型名；返回是否发生了空值回退。
+        /// 只有调用方（「保存模型设置」）会调它，输入本身不落库。
+        /// </summary>
+        public bool CommitPendingModels()
+        {
+            var fast = (_pendingFastModel ?? "").Trim();
+            var std = (_pendingStdModel ?? "").Trim();
+            var fellBack = fast.Length == 0 || std.Length == 0;
+
+            FastModel = fast.Length == 0 ? ProviderItem.ApiYiDefaultFastModel : fast;
+            StdModel = std.Length == 0 ? ProviderItem.ApiYiDefaultStdModel : std;
+
+            _pendingFastModel = FastModel;
+            _pendingStdModel = StdModel;
+            OnPropertyChanged(nameof(PendingFastModel));
+            OnPropertyChanged(nameof(PendingStdModel));
+            return fellBack;
+        }
+
+        // ── 出图模式 ──────────────────────────────────────────────────────
+
+        public bool IsFastMode
+        {
+            get => _isFastMode;
+            set
+            {
+                if (_isFastMode == value)
+                    return;
+                _isFastMode = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsStandardMode));
+                OnPropertyChanged(nameof(SelectedModel));
+                OnPropertyChanged(nameof(IsMaskEditable));
+                OnPropertyChanged(nameof(IsRatioEnabled));
+                OnPropertyChanged(nameof(IsImageSizeEnabled));
+                OnPropertyChanged(nameof(SizeSummary));
+                RefreshDerived();
+            }
+        }
+
+        public bool IsStandardMode
+        {
+            get => !_isFastMode;
+            set { if (value) IsFastMode = false; else IsFastMode = true; }
+        }
+
+        /// <summary>快速出图不支持涂抹/蒙版</summary>
+        public bool IsMaskEditable => IsStandardMode;
+        public bool IsRatioEnabled => IsStandardMode;
+        public bool IsImageSizeEnabled => IsStandardMode;
+        public bool IsSourceImageModeEnabled => true;
+
+        // ── 蒙版状态（由 ViewModel 同步，用于 SelectedModel 与界面状态）──
+
+        private bool _isMaskEditing;
+        public bool IsMaskEditing
+        {
+            get => _isMaskEditing;
+            set { _isMaskEditing = value; OnPropertyChanged(); OnPropertyChanged(nameof(SelectedModel)); }
+        }
+
+        private bool _isMaskApplied;
+        public bool IsMaskApplied
+        {
+            get => _isMaskApplied;
+            set { _isMaskApplied = value; OnPropertyChanged(); OnPropertyChanged(nameof(SelectedModel)); }
+        }
+
+        // ── 比例与尺寸 ────────────────────────────────────────────────────
+
+        /// <summary>「原图」+ 5 个常用档位；每个档位自带选中态与悬停提示，界面直接绑定</summary>
+        public List<AspectRatio> AspectRatios { get; } = BuildAspectRatios();
+
+        private static List<AspectRatio> BuildAspectRatios()
+        {
+            var list = new List<AspectRatio>
+            {
+                new AspectRatio { Name = "原图", Ratio = ImageSizeTable.RatioAuto }
+            };
+            foreach (var key in ImageSizeTable.Ratios)
+                list.Add(new AspectRatio { Name = key, Ratio = key });
+            return list;
+        }
+
+        public AspectRatio SelectedAspectRatio
+        {
+            get => _selectedAspectRatio ?? AspectRatios[0];
+            set
+            {
+                _selectedAspectRatio = value ?? AspectRatios[0];
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(ResolvedRatio));
+                OnPropertyChanged(nameof(RatioSummary));
+                OnPropertyChanged(nameof(SizeSummary));
+                RefreshDerived();
+            }
+        }
+
+        /// <summary>「原图」按原图长宽比吸附后的实际档位</summary>
+        public string ResolvedRatio =>
+            ImageSizeTable.Resolve(SelectedAspectRatio?.Ratio, SourceAspect);
+
+        public double SourceAspect =>
+            SourceHeight > 0 ? (double)SourceWidth / SourceHeight : 1.0;
+
+        /// <summary>「原图」档位旁的提示：按原图 <吸附档位></summary>
+        public string AutoRatioHint =>
+            SelectedAspectRatio?.Ratio == ImageSizeTable.RatioAuto ? "按原图 " + ResolvedRatio : "";
+
+        public string RatioSummary => AutoRatioHint;
+
+        /// <summary>「原图」按钮的悬停说明</summary>
+        public string AutoRatioTooltip => "按原图长宽比自动匹配 → " + ResolvedRatio;
+
+        public string RatioLockedTooltip =>
+            "快速出图不指定尺寸，由提示词决定";
+
+        public List<SizeOption> ImageSizes { get; } = new List<SizeOption>
+        {
+            new SizeOption("1K"), new SizeOption("2K"), new SizeOption("4K")
+        };
+
+        public string SelectedImageSize
+        {
+            get => _selectedImageSize;
+            set
+            {
+                var next = string.IsNullOrWhiteSpace(value) ? "1K" : value;
+                if (_selectedImageSize == next)
+                    return;
+                _selectedImageSize = next;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(SizeSummary));
+                RefreshDerived();
+            }
+        }
+
+        /// <summary>图片尺寸下面的实时像素读数（快速出图没有 size 参数，显示自适应）</summary>
+        public string SizeSummary =>
+            IsFastMode
+                ? ImageSizeTable.FastSizeText
+                : "输出 " + ImageSizeTable.PixelsText(ResolvedRatio, SelectedImageSize) +
+                  " · " + ImageSizeTable.MegapixelsText(ResolvedRatio, SelectedImageSize);
+
+        /// <summary>
+        /// 选中态与悬停提示全部派生自 (模式 / 比例 / 尺寸 / 原图长宽比)，
+        /// 任何一处变化都从这里统一刷新，界面不再自己算第二套状态。
+        /// </summary>
+        public void RefreshDerived()
+        {
+            var fast = IsFastMode;
+            var sizeKey = SelectedImageSize;
+            var selectedRatio = SelectedAspectRatio?.Ratio ?? ImageSizeTable.RatioAuto;
+            var resolved = ResolvedRatio;
+
+            foreach (var ratio in AspectRatios)
+            {
+                ratio.IsSelected = !fast && string.Equals(ratio.Ratio, selectedRatio, StringComparison.Ordinal);
+                ratio.ToolTip = fast
+                    ? ratio.Name + " · " + RatioLockedTooltip
+                    : ratio.Ratio == ImageSizeTable.RatioAuto
+                        ? AutoRatioTooltip
+                        : ImageSizeTable.Tooltip(ratio.Ratio, sizeKey);
+            }
+
+            foreach (var size in ImageSizes)
+            {
+                size.IsSelected = !fast && string.Equals(size.Key, sizeKey, StringComparison.Ordinal);
+                size.IsEnabled = !fast;
+                size.ToolTip = size.DisplayName + "（" + size.Key + "） · " +
+                               ImageSizeTable.PixelsText(resolved, size.Key);
+            }
+
+            OnPropertyChanged(nameof(ResolvedRatio));
+            OnPropertyChanged(nameof(AutoRatioHint));
+            OnPropertyChanged(nameof(RatioSummary));
+            OnPropertyChanged(nameof(AutoRatioTooltip));
+            OnPropertyChanged(nameof(SizeSummary));
+            OnPropertyChanged(nameof(SourceAspect));
+        }
+
+        // ── 服务商（兼容批量窗口的绑定）────────────────────────────────────
+
+        public ApiProvider SelectedProvider { get; set; } = ApiProvider.ApiYi;
+
         public ProviderItem SelectedProviderItem
         {
             get => _selectedProviderItem;
             set
             {
-                _selectedProviderItem = value;
-                if (value != null)
-                {
-                    if (!value.IsCustom && value.BuiltInProvider.HasValue)
-                        _selectedProvider = value.BuiltInProvider.Value;
-                    LoadProviderModelsFromItem(value);
-                }
+                _selectedProviderItem = value ?? ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi));
                 OnPropertyChanged();
-                OnPropertyChanged(nameof(SelectedProvider));
                 OnPropertyChanged(nameof(SelectedProviderDisplayName));
-                OnPropertyChanged(nameof(IsImageSizeEnabled));
             }
         }
 
-        private void LoadProviderModelsFromItem(ProviderItem provider)
+        public string SelectedProviderDisplayName => "API易";
+
+        /// <summary>兼容旧绑定：模型清单</summary>
+        public List<ModelItem> ModelList { get; } = new List<ModelItem>
         {
-            AvailableModels = provider.Models ?? new List<string>();
-            ModelDisplayNames = new Dictionary<string, string>();
-            ModelList = new List<ModelItem>();
-            foreach (var model in AvailableModels)
-                ModelList.Add(new ModelItem { DisplayName = model, Model = model });
-
-            var targetModel = !string.IsNullOrEmpty(provider.DefaultModel)
-                ? provider.DefaultModel
-                : (AvailableModels.Count > 0 ? AvailableModels[0] : "");
-            SelectedModel = targetModel;
-            _selectedModelItem = ModelList.Find(item => item.Model == SelectedModel);
-            _apiUrl = provider.BaseUrl;
-
-            OnPropertyChanged(nameof(AvailableModels));
-            OnPropertyChanged(nameof(ModelDisplayNames));
-            OnPropertyChanged(nameof(SelectedProviderDisplayName));
-            OnPropertyChanged(nameof(SelectedModelDisplayName));
-            OnPropertyChanged(nameof(ApiUrl));
-            OnPropertyChanged(nameof(ModelList));
-            OnPropertyChanged(nameof(SelectedModelItem));
-            OnPropertyChanged(nameof(IsImageSizeEnabled));
-            OnPropertyChanged(nameof(IsSourceImageModeEnabled));
-        }
-
-        public RenderSettings()
-        {
-            // Initialize with default provider (BltAI)
-            LoadProviderModels(ApiProvider.BltAI);
-        }
-
-        public ApiProvider SelectedProvider
-        {
-            get => _selectedProvider;
-            set
-            {
-                if (_selectedProvider != value)
-                {
-                    _selectedProvider = value;
-                    OnPropertyChanged();
-                    // Load models for the selected provider
-                    LoadProviderModels(value);
-                }
-            }
-        }
-
-        private void LoadProviderModels(ApiProvider provider)
-        {
-            _currentProviderConfig = ApiProviderConfig.GetConfig(provider);
-            if (_currentProviderConfig != null)
-            {
-                AvailableModels = _currentProviderConfig.Models;
-                ModelDisplayNames = _currentProviderConfig.ModelDisplayNames;
-                // Build model list with display names
-                ModelList = new List<ModelItem>();
-                foreach (var model in _currentProviderConfig.Models)
-                {
-                    string displayName = model;
-                    if (_currentProviderConfig.ModelDisplayNames != null &&
-                        _currentProviderConfig.ModelDisplayNames.TryGetValue(model, out var name))
-                    {
-                        displayName = name;
-                    }
-                    ModelList.Add(new ModelItem { DisplayName = displayName, Model = model });
-                }
-                // Reset to default model
-                SelectedModel = _currentProviderConfig.DefaultModel;
-                // Set SelectedModelItem to match
-                foreach (var item in ModelList)
-                {
-                    if (item.Model == SelectedModel)
-                    {
-                        _selectedModelItem = item;
-                        break;
-                    }
-                }
-                // Update API URL
-                _apiUrl = _currentProviderConfig.BaseUrl;
-            }
-            OnPropertyChanged(nameof(AvailableModels));
-            OnPropertyChanged(nameof(ModelDisplayNames));
-            OnPropertyChanged(nameof(SelectedProviderDisplayName));
-            OnPropertyChanged(nameof(SelectedModelDisplayName));
-            OnPropertyChanged(nameof(ApiUrl));
-            OnPropertyChanged(nameof(ModelList));
-            OnPropertyChanged(nameof(SelectedModelItem));
-            OnPropertyChanged(nameof(IsImageSizeEnabled));
-            OnPropertyChanged(nameof(IsSourceImageModeEnabled));
-        }
-
-        // Display names for UI
-        public string SelectedProviderDisplayName => _selectedProviderItem?.DisplayName ?? _currentProviderConfig?.DisplayName ?? "Bltcy";
-        public bool IsImageSizeEnabled => _selectedProviderItem?.ApiFormat != "images_generations";
-        public bool IsSourceImageModeEnabled => _selectedProviderItem?.ApiFormat == "images_generations" || IsApiYiGptImage2OpenAI;
-        private bool IsApiYiGptImage2OpenAI
-        {
-            get
-            {
-                if (_selectedProviderItem?.ApiFormat != "openai" ||
-                    !_selectedModel.Equals("gpt-image-2", StringComparison.OrdinalIgnoreCase))
-                    return false;
-
-                try
-                {
-                    var host = new Uri(_selectedProviderItem.BaseUrl ?? "").Host;
-                    return host.Equals("api.apiyi.com", StringComparison.OrdinalIgnoreCase) ||
-                           host.Equals("vip.apiyi.com", StringComparison.OrdinalIgnoreCase) ||
-                           host.Equals("b.apiyi.com", StringComparison.OrdinalIgnoreCase);
-                }
-                catch { return false; }
-            }
-        }
-        public string SelectedModelDisplayName
-        {
-            get
-            {
-                if (_currentProviderConfig?.ModelDisplayNames != null &&
-                    _currentProviderConfig.ModelDisplayNames.TryGetValue(_selectedModel, out var displayName))
-                {
-                    return displayName;
-                }
-                return _selectedModel;
-            }
-        }
-
-        // Available models for current provider
-        public List<string> AvailableModels { get; private set; } = new List<string>();
-
-        // Model list with display names
-        public List<ModelItem> ModelList { get; private set; } = new List<ModelItem>();
-
-        // Model display names for current provider
-        public Dictionary<string, string> ModelDisplayNames { get; private set; } = new Dictionary<string, string>();
-
-        // Prompt templates (user-editable, persisted)
-        private ObservableCollection<PromptTemplate> _promptTemplates;
-        public ObservableCollection<PromptTemplate> PromptTemplates
-        {
-            get => _promptTemplates;
-            set { _promptTemplates = value; OnPropertyChanged(); }
-        }
-
-        private PromptTemplate _selectedPromptTemplate;
-        public PromptTemplate SelectedPromptTemplate
-        {
-            get => _selectedPromptTemplate;
-            set
-            {
-                _selectedPromptTemplate = value;
-                OnPropertyChanged();
-                if (value != null)
-                    Prompt = value.Prompt ?? "";
-            }
-        }
-
-        // Reference image library (stored as base64 strings)
-        private ObservableCollection<ReferenceImageItem> _referenceImages;
-        public ObservableCollection<ReferenceImageItem> ReferenceImages
-        {
-            get => _referenceImages;
-            set { _referenceImages = value; OnPropertyChanged(); }
-        }
-
-        private ReferenceImageItem _selectedReferenceImage;
-        public ReferenceImageItem SelectedReferenceImage
-        {
-            get => _selectedReferenceImage;
-            set { _selectedReferenceImage = value; OnPropertyChanged(); }
-        }
-
-        private ObservableCollection<ReferenceImageItem> _activeReferenceImages = new ObservableCollection<ReferenceImageItem>();
-        public ObservableCollection<ReferenceImageItem> ActiveReferenceImages
-        {
-            get => _activeReferenceImages;
-            set { _activeReferenceImages = value ?? new ObservableCollection<ReferenceImageItem>(); OnPropertyChanged(); }
-        }
-
-        // Keep for batch mode compat
-        private StyleTemplate _selectedStyle;
-
-        // Aspect ratio presets
-        public List<AspectRatio> AspectRatios { get; } = new List<AspectRatio>
-        {
-            new AspectRatio { Name = "Original", Ratio = "" },
-            new AspectRatio { Name = "1:1", Ratio = "1:1" },
-            new AspectRatio { Name = "4:3", Ratio = "4:3" },
-            new AspectRatio { Name = "3:2", Ratio = "3:2" },
-            new AspectRatio { Name = "16:9", Ratio = "16:9" },
-            new AspectRatio { Name = "9:16", Ratio = "9:16" },
-            new AspectRatio { Name = "21:9", Ratio = "21:9" }
-        };
-
-        private AspectRatio _selectedAspectRatio;
-        public AspectRatio SelectedAspectRatio
-        {
-            get => _selectedAspectRatio ?? AspectRatios[0];
-            set { _selectedAspectRatio = value; OnPropertyChanged(); }
-        }
-
-        private string _selectedImageSize = "1K";
-        public string SelectedImageSize
-        {
-            get => _selectedImageSize;
-            set { _selectedImageSize = value; OnPropertyChanged(); }
-        }
-
-        // Image sizes
-        public List<string> ImageSizes { get; } = new List<string>
-        {
-            "0.5K",
-            "1K",
-            "2K",
-            "4K"
+            new ModelItem { DisplayName = "GPT Image 2.5 All（快速）", Model = ProviderItem.ApiYiDefaultFastModel },
+            new ModelItem { DisplayName = "GPT Image 2.5 VIP（标准）", Model = ProviderItem.ApiYiDefaultStdModel }
         };
 
         public List<ModelItem> SourceImageModes { get; } = new List<ModelItem>
@@ -290,72 +344,29 @@ namespace AIRenderer.Models
 
         public string SelectedSourceImageMode => SelectedSourceImageModeItem?.Model ?? "balanced";
 
-        public StyleTemplate SelectedStyle
-        {
-            get => _selectedStyle;
-            set
-            {
-                _selectedStyle = value;
-                OnPropertyChanged();
-                if (value != null && value.Name != "None")
-                {
-                    Prompt = value.Prompt ?? "";
-                }
-            }
-        }
-
-        // Properties
-        private ModelItem _selectedModelItem;
-        public ModelItem SelectedModelItem
-        {
-            get => _selectedModelItem;
-            set
-            {
-                _selectedModelItem = value;
-                if (value != null)
-                {
-                    _selectedModel = value.Model;
-                }
-                OnPropertyChanged();
-                OnPropertyChanged(nameof(SelectedModel));
-                OnPropertyChanged(nameof(IsSourceImageModeEnabled));
-            }
-        }
-
-        public string SelectedModel
-        {
-            get => _selectedModel;
-            set
-            {
-                _selectedModel = value;
-                OnPropertyChanged();
-                OnPropertyChanged(nameof(IsSourceImageModeEnabled));
-            }
-        }
-
-        public string ApiUrl
-        {
-            get => _apiUrl;
-            set { _apiUrl = value; OnPropertyChanged(); }
-        }
-
-        public string ApiKey
-        {
-            get => _apiKey;
-            set { _apiKey = value; OnPropertyChanged(); }
-        }
+        // ── 提示词 ────────────────────────────────────────────────────────
 
         public string Prompt
         {
             get => _prompt;
-            set { _prompt = value; OnPropertyChanged(); }
+            set { _prompt = value ?? ""; OnPropertyChanged(); }
         }
 
         public string SystemPrompt
         {
             get => _systemPrompt;
-            set { _systemPrompt = value; OnPropertyChanged(); }
+            set { _systemPrompt = value ?? ""; OnPropertyChanged(); }
         }
+
+        // ── 自动保存生成记录 ──────────────────────────────────────────────
+
+        public bool AutoSaveHistory
+        {
+            get => _autoSaveHistory;
+            set { _autoSaveHistory = value; OnPropertyChanged(); }
+        }
+
+        // ── 图像尺寸 ──────────────────────────────────────────────────────
 
         public int Width
         {
@@ -372,25 +383,33 @@ namespace AIRenderer.Models
         public int SourceWidth
         {
             get => _sourceWidth;
-            set { _sourceWidth = value; OnPropertyChanged(); }
+            set
+            {
+                if (_sourceWidth == value)
+                    return;
+                _sourceWidth = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(SourceAspect));
+                OnPropertyChanged(nameof(ResolvedRatio));
+                OnPropertyChanged(nameof(SizeSummary));
+                RefreshDerived();
+            }
         }
 
         public int SourceHeight
         {
             get => _sourceHeight;
-            set { _sourceHeight = value; OnPropertyChanged(); }
-        }
-
-        public string VertexProject
-        {
-            get => _vertexProject;
-            set { _vertexProject = value; OnPropertyChanged(); }
-        }
-
-        public string VertexLocation
-        {
-            get => _vertexLocation;
-            set { _vertexLocation = value; OnPropertyChanged(); }
+            set
+            {
+                if (_sourceHeight == value)
+                    return;
+                _sourceHeight = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(SourceAspect));
+                OnPropertyChanged(nameof(ResolvedRatio));
+                OnPropertyChanged(nameof(SizeSummary));
+                RefreshDerived();
+            }
         }
 
         public void SetSourceDimensions(int width, int height)
@@ -399,6 +418,67 @@ namespace AIRenderer.Models
             SourceHeight = height;
             Width = width;
             Height = height;
+            RefreshDerived();
+        }
+
+        // ── 参考图 / 提示词库（沿用既有持久化）────────────────────────────
+
+        private ObservableCollection<ReferenceImageItem> _referenceImages;
+        public ObservableCollection<ReferenceImageItem> ReferenceImages
+        {
+            get => _referenceImages;
+            set { _referenceImages = value; OnPropertyChanged(); }
+        }
+
+        private ReferenceImageItem _selectedReferenceImage;
+        public ReferenceImageItem SelectedReferenceImage
+        {
+            get => _selectedReferenceImage;
+            set { _selectedReferenceImage = value; OnPropertyChanged(); }
+        }
+
+        private ObservableCollection<ReferenceImageItem> _activeReferenceImages = new ObservableCollection<ReferenceImageItem>();
+        public ObservableCollection<ReferenceImageItem> ActiveReferenceImages
+        {
+            get => _activeReferenceImages;
+            set { _activeReferenceImages = value ?? new ObservableCollection<ReferenceImageItem>(); OnPropertyChanged(); }
+        }
+
+        private ObservableCollection<PromptTemplate> _promptTemplates;
+        public ObservableCollection<PromptTemplate> PromptTemplates
+        {
+            get => _promptTemplates;
+            set { _promptTemplates = value; OnPropertyChanged(); }
+        }
+
+        private ObservableCollection<PromptHistoryItem> _promptHistory;
+        public ObservableCollection<PromptHistoryItem> PromptHistory
+        {
+            get => _promptHistory;
+            set { _promptHistory = value; OnPropertyChanged(); }
+        }
+
+        private bool _isPromptHistoryExpanded;
+        public bool IsPromptHistoryExpanded
+        {
+            get => _isPromptHistoryExpanded;
+            set { _isPromptHistoryExpanded = value; OnPropertyChanged(); }
+        }
+
+        // ── 兼容批量窗口的旧绑定（主界面已不再使用这几项）──────────────
+        public ModelItem SelectedModelItem
+        {
+            get => ModelList.Find(m => m.Model == SelectedModel);
+            set { if (value != null) SelectedModel = value.Model; OnPropertyChanged(); }
+        }
+
+        public List<StyleTemplate> StyleTemplates { get; } = new List<StyleTemplate>();
+
+        private StyleTemplate _selectedStyle;
+        public StyleTemplate SelectedStyle
+        {
+            get => _selectedStyle;
+            set { _selectedStyle = value; OnPropertyChanged(); }
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
@@ -409,6 +489,7 @@ namespace AIRenderer.Models
         }
     }
 
+    /// <summary>旧风格模板类型：仅为兼容批量窗口的绑定而保留，不再有内置样式</summary>
     public class StyleTemplate
     {
         public string Name { get; set; }
@@ -420,6 +501,67 @@ namespace AIRenderer.Models
         public string Id { get; set; } = Guid.NewGuid().ToString();
         public string Name { get; set; }
         public string Prompt { get; set; }
+    }
+
+    /// <summary>提示词历史条目（与生成历史完全分开保存）</summary>
+    public class PromptHistoryItem
+    {
+        public string Text { get; set; }
+        public DateTime CreatedAt { get; set; }
+
+        [JsonIgnore]
+        public string DisplayTime => CreatedAt.ToString("MM-dd HH:mm");
+    }
+
+    /// <summary>生成历史条目：只保存图片路径与时间，绝不写入提示词</summary>
+    public class GenerationHistoryItem
+    {
+        private BitmapSource _thumbnail;
+
+        public string Id { get; set; } = Guid.NewGuid().ToString("N");
+        public string FilePath { get; set; }
+        public DateTime CreatedAt { get; set; }
+
+        [JsonIgnore]
+        public string DisplayTime => CreatedAt.ToString("MM-dd HH:mm");
+
+        /// <summary>
+        /// 抽屉缩略图：首次绑定时从磁盘解码（限制解码宽度，30 条也不会拖慢界面），
+        /// 之后缓存；文件被删就返回 null，界面显示占位。不进 index.json。
+        /// </summary>
+        [JsonIgnore]
+        public BitmapSource Thumbnail
+        {
+            get
+            {
+                if (_thumbnail == null)
+                    _thumbnail = LoadThumbnail(FilePath);
+                return _thumbnail;
+            }
+        }
+
+        private static BitmapSource LoadThumbnail(string path)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                    return null;
+
+                var image = new BitmapImage();
+                image.BeginInit();
+                image.CacheOption = BitmapCacheOption.OnLoad;
+                image.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+                image.DecodePixelWidth = 320;
+                image.UriSource = new Uri(path, UriKind.Absolute);
+                image.EndInit();
+                image.Freeze();
+                return image;
+            }
+            catch
+            {
+                return null;
+            }
+        }
     }
 
     public class ReferenceImageItem : INotifyPropertyChanged
@@ -444,10 +586,105 @@ namespace AIRenderer.Models
         public event PropertyChangedEventHandler PropertyChanged;
     }
 
-    public class AspectRatio
+    /// <summary>图片比例档位：Name 是显示文案（「原图」或 1:1…），Ratio 是落库的 key</summary>
+    public class AspectRatio : INotifyPropertyChanged
     {
+        private bool _isSelected;
+        private string _toolTip;
+
         public string Name { get; set; }
         public string Ratio { get; set; }
+
+        /// <summary>当前是否被选中（由 RenderSettings.RefreshDerived 统一维护）</summary>
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected == value) return;
+                _isSelected = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+            }
+        }
+
+        /// <summary>悬停提示：档位 + 当前尺寸下的像素 + 官方尺寸约束</summary>
+        public string ToolTip
+        {
+            get => _toolTip;
+            set
+            {
+                if (_toolTip == value) return;
+                _toolTip = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ToolTip)));
+            }
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+    }
+
+    /// <summary>图片尺寸档位（1K / 2K / 4K）：选中态与可用态同样由 settings 统一派生</summary>
+    public class SizeOption : INotifyPropertyChanged
+    {
+        private bool _isSelected;
+        private bool _isEnabled = true;
+        private string _toolTip;
+
+        public SizeOption(string key)
+        {
+            Key = key;
+        }
+
+        public string Key { get; }
+
+        /// <summary>1K / 2K / 4K 的中文档位名，悬停提示里用</summary>
+        public string DisplayName
+        {
+            get
+            {
+                switch (Key)
+                {
+                    case "1K": return "草稿";
+                    case "2K": return "常规";
+                    case "4K": return "高清";
+                    default: return Key;
+                }
+            }
+        }
+
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected == value) return;
+                _isSelected = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+            }
+        }
+
+        public bool IsEnabled
+        {
+            get => _isEnabled;
+            set
+            {
+                if (_isEnabled == value) return;
+                _isEnabled = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEnabled)));
+            }
+        }
+
+        public string ToolTip
+        {
+            get => _toolTip;
+            set
+            {
+                if (_toolTip == value) return;
+                _toolTip = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ToolTip)));
+            }
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
     }
 
     public class ModelItem

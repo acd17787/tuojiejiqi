@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net7.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <AssemblyName>ApiProbe</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>NU1701</NoWarn>
+  </PropertyGroup>
+
+  <!-- 插件产物是 TuoJie.rhp；先复制成 TuoJie.dll，再按普通程序集引用（Private=true），
+       这样它才会被写进 ApiProbe.deps.json 并复制到输出目录，运行时能解析到。 -->
+  <Target Name="PrepareTuoJieAssembly" BeforeTargets="ResolveAssemblyReferences">
+    <Copy SourceFiles="$(TuoJieDir)\TuoJie.rhp" DestinationFiles="$(TuoJieDir)\TuoJie.dll" Condition="Exists('$(TuoJieDir)\TuoJie.rhp')" />
+  </Target>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Reference Include="TuoJie">
+      <HintPath>$(TuoJieDir)\TuoJie.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+</Project>
