@@ -108,7 +108,9 @@ namespace AIRenderer.Services
                         s_process = proc;
                         s_activeSidecarPath = sidecarExe;
                         s_net48FallbackActive = sidecarExe.Contains("net48");
-                        s_refCount = 1;
+                        // 保留已有引用计数：静态 DownloadClient 等其他 handler 仍在使用这个进程，
+                        // 置 1 会让它们关窗时把计数打到 0、Kill 掉别人正在用的侧车。
+                        s_refCount = Math.Max(1, s_refCount);
 
                         if (s_net48FallbackActive)
                             RhinoApp.WriteLine("[TuoJie] Using net48 Sidecar (fallback mode)");

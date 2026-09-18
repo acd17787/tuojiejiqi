@@ -237,7 +237,7 @@ namespace TuoJieSidecar
             catch (TaskCanceledException)
             {
                 LogInfo($"HTTP request timed out | {requestInfo}");
-                return new SidecarResponse { Id = request.Id, StatusCode = 0, Error = "Request timed out (30 min)" };
+                return new SidecarResponse { Id = request.Id, StatusCode = 0, Error = "Request timed out (10 min)" };
             }
             catch (HttpRequestException ex) when (ex.InnerException is System.Net.Sockets.SocketException se && se.SocketErrorCode == System.Net.Sockets.SocketError.AccessDenied)
             {

@@ -68,7 +68,24 @@ namespace AIRenderer.ViewModels
             _settings = settings ?? new RenderSettings();
 
             Settings.PromptHistory = new ObservableCollection<PromptHistoryItem>(HistoryService.LoadPromptHistory());
-            Settings.ActiveReferenceImages = new ObservableCollection<ReferenceImageItem>();
+            // 参考图跨会话保留：回填上次的参考图（文件已复制到 %AppData%，路径长期有效）。
+            // 原来这里无条件清空，配合从未被调用的 SaveReferenceImages，等于加了参考图重启就没。
+            Settings.ActiveReferenceImages = new ObservableCollection<ReferenceImageItem>(
+                SettingsService.LoadReferenceImages()
+                    .Where(i => i != null && !string.IsNullOrEmpty(i.FilePath) && File.Exists(i.FilePath)));
+
+            // 增删参考图后立即落盘，界面不用再记着调用
+            Settings.ActiveReferenceImages.CollectionChanged += (s2, e2) =>
+            {
+                try
+                {
+                    SettingsService.SaveReferenceImages(Settings.ActiveReferenceImages.ToList());
+                }
+                catch (Exception ex)
+                {
+                    LogService.Error("Failed to persist reference images", ex);
+                }
+            };
             GenerationHistory = new ObservableCollection<GenerationHistoryItem>(HistoryService.LoadGenerationHistory());
 
             // 计数与空状态都从这里派生：增删记录的地方不用各自记得发通知
@@ -1009,15 +1026,17 @@ namespace AIRenderer.ViewModels
         /// 注意两点：绑定中的 ObservableCollection 只能在 UI 线程改，所以 Insert 留在 await 之后；
         /// 调用方必须 await（不能 fire-and-forget），否则 using 作用域会先 Dispose 掉位图。
         /// </summary>
-        private async Task SaveToHistoryAsync(Bitmap bitmap)
+        /// <summary>返回是否真的写进了历史（索引被占用/损坏时 AddGeneration 会失败并回滚图片）。</summary>
+        private async Task<bool> SaveToHistoryAsync(Bitmap bitmap)
         {
             var item = await Task.Run(() => HistoryService.AddGeneration(bitmap));
             if (item == null)
-                return;
+                return false;
 
             GenerationHistory.Insert(0, item);
             while (GenerationHistory.Count > HistoryService.MaxGenerationItems)
                 GenerationHistory.RemoveAt(GenerationHistory.Count - 1);
+            return true;
         }
 
         private void UseHistoryAsSource(GenerationHistoryItem item)
@@ -1310,7 +1329,17 @@ namespace AIRenderer.ViewModels
             LogService.Info("FinishGeneration | start");
             RecordPromptHistory(prompt);
             LogService.Info("FinishGeneration | 提示词历史已写");
-            ResultImage = await ToBitmapSourceAsync(resultBitmap);
+            var resultSource = await ToBitmapSourceAsync(resultBitmap);
+            if (resultSource == null)
+            {
+                // 三条转换路径全失败时会返回 null：不能一边报「生成完成」一边给空白结果
+                LogService.Error("结果位图转换失败：三条转换路径都抛异常");
+                StatusMessage = "生成完成，但结果图转换失败，无法显示";
+                Toast("结果图转换失败，请重试");
+                return;
+            }
+
+            ResultImage = resultSource;
             LogService.Info("FinishGeneration | 结果已绑定到界面");
 
             GenerationProgress = 100;
@@ -1325,9 +1354,11 @@ namespace AIRenderer.ViewModels
 
             if (save)
             {
-                await SaveToHistoryAsync(resultBitmap);
-                LogService.Info("FinishGeneration | 历史已落盘");
-                StatusMessage = $"已生成 {size} · 已保存到历史";
+                var saved = await SaveToHistoryAsync(resultBitmap);
+                LogService.Info(saved ? "FinishGeneration | 历史已落盘" : "FinishGeneration | 历史保存失败");
+                StatusMessage = saved
+                    ? $"已生成 {size} · 已保存到历史"
+                    : $"已生成 {size} · 历史保存失败（记录索引被占用，本次未留存）";
             }
 
             LogService.Info("FinishGeneration | done");

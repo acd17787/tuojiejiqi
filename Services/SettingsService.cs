@@ -327,6 +327,9 @@ namespace AIRenderer.Services
                 var bak = SettingsFile + ".corrupt-" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
                 File.Move(SettingsFile, bak);
                 LogService.Warn($"损坏的设置文件已备份到 {bak}");
+                // 原内容已保全，本次会话可以正常写盘了；否则用户重新填的 Key/模型会被静默丢弃，
+                // 要等重启才发现——禁写的目的是「别覆盖原始配置」，备份后这个目的已经达到。
+                _settingsLoadFailed = false;
             }
             catch (Exception ex)
             {
