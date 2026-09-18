@@ -24,6 +24,10 @@ namespace AIRenderer.Services
         public bool IsFastMode { get; set; } = true;
         public string AspectRatio { get; set; } = "auto";
         public string ImageSize { get; set; } = "1K";
+        /// <summary>
+        /// 提示词模板库：界面已移除入口，运行时不再读写。字段保留只为「读整份→改字段→
+        /// 覆盖整份」的保存流程不丢用户数据，将来做回该功能时内容还在。
+        /// </summary>
         public List<PromptTemplate> PromptTemplates { get; set; } = new List<PromptTemplate>();
         public List<ReferenceImageItem> ReferenceImages { get; set; } = new List<ReferenceImageItem>();
 
@@ -133,67 +137,6 @@ namespace AIRenderer.Services
             provider.Models = new List<string> { render.FastModel, render.StdModel, RenderSettings.MaskModel }
                 .Where(m => !string.IsNullOrWhiteSpace(m)).Distinct().ToList();
             return provider;
-        }
-
-        // ── 兼容旧调用 ────────────────────────────────────────────────────
-
-        public static (string apiKey, string selectedModel, ProviderItem selectedProvider) LoadSettingsWithProvider()
-        {
-            var render = LoadRenderSettings();
-            return (render.ApiKey, render.SelectedModel, render.SelectedProviderItem);
-        }
-
-        public static void SaveSettings(string apiKey, string selectedModel, ProviderItem provider)
-        {
-            var render = LoadRenderSettings();
-            render.ApiKey = apiKey ?? render.ApiKey;
-            if (!string.IsNullOrWhiteSpace(selectedModel))
-                render.SelectedModel = selectedModel;
-            if (provider != null)
-            {
-                render.BaseUrl = provider.BaseUrl;
-                render.SelectedProviderItem = provider;
-            }
-            SaveRenderSettings(render);
-        }
-
-        public static (string apiKey, string selectedModel, ApiProvider selectedProvider) LoadSettings()
-        {
-            var (apiKey, selectedModel, provider) = LoadSettingsWithProvider();
-            return (apiKey, selectedModel, provider?.BuiltInProvider ?? ApiProvider.ApiYi);
-        }
-
-        public static void SaveSettings(string apiKey, string selectedModel, ApiProvider selectedProvider)
-            => SaveSettings(apiKey, selectedModel, ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi)));
-
-        public static string GetApiKey(string providerId)
-        {
-            var settings = LoadSettingsInternal();
-            return string.IsNullOrEmpty(settings.ApiKey)
-                ? FirstLegacyKey(settings)
-                : settings.ApiKey;
-        }
-
-        public static string GetApiKey(ApiProvider provider) => GetApiKey(provider.ToString());
-
-        public static List<ProviderItem> GetAllProviders()
-            => new List<ProviderItem> { ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi)) };
-
-        // ── Prompt Templates ──────────────────────────────────────────────
-
-        public static List<PromptTemplate> LoadPromptTemplates()
-            => LoadSettingsInternal().PromptTemplates ?? new List<PromptTemplate>();
-
-        public static void SavePromptTemplates(List<PromptTemplate> templates)
-        {
-            try
-            {
-                if (!Directory.Exists(SettingsFolder)) Directory.CreateDirectory(SettingsFolder);
-                var settings = LoadSettingsInternal();
-                settings.PromptTemplates = templates ?? new List<PromptTemplate>();
-                WriteSettingsFile(settings);
-            }
-            catch (Exception ex) { LogService.Error("Error saving prompt templates", ex); }
         }
 
         // ── Reference Images ──────────────────────────────────────────────

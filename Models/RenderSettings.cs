@@ -24,8 +24,6 @@ namespace AIRenderer.Models
         private bool _autoSaveHistory = true;
         private string _prompt = "";
         private string _systemPrompt = "This is a render image. Do not change the camera position or FOV. Maintain the structural integrity and perspective consistency of all objects in the scene.";
-        private int _width = 512;
-        private int _height = 512;
         private int _sourceWidth;
         private int _sourceHeight;
         private AspectRatio _selectedAspectRatio;
@@ -269,7 +267,7 @@ namespace AIRenderer.Models
             OnPropertyChanged(nameof(SourceAspect));
         }
 
-        // ── 服务商（兼容批量窗口的绑定）────────────────────────────────────
+        // ── 服务商 ────────────────────────────────────────────────────────
 
 
         public ProviderItem SelectedProviderItem
@@ -282,13 +280,6 @@ namespace AIRenderer.Models
             }
         }
 
-
-        /// <summary>兼容旧绑定：模型清单</summary>
-        public List<ModelItem> ModelList { get; } = new List<ModelItem>
-        {
-            new ModelItem { DisplayName = "GPT Image 2.5 All（快速）", Model = ProviderItem.ApiYiDefaultFastModel },
-            new ModelItem { DisplayName = "GPT Image 2.5 VIP（标准）", Model = ProviderItem.ApiYiDefaultStdModel }
-        };
 
         public List<ModelItem> SourceImageModes { get; } = new List<ModelItem>
         {
@@ -335,18 +326,6 @@ namespace AIRenderer.Models
 
         // ── 图像尺寸 ──────────────────────────────────────────────────────
 
-        public int Width
-        {
-            get => _width;
-            set { _width = value; OnPropertyChanged(); }
-        }
-
-        public int Height
-        {
-            get => _height;
-            set { _height = value; OnPropertyChanged(); }
-        }
-
         public int SourceWidth
         {
             get => _sourceWidth;
@@ -383,39 +362,15 @@ namespace AIRenderer.Models
         {
             SourceWidth = width;
             SourceHeight = height;
-            Width = width;
-            Height = height;
-            RefreshDerived();
         }
 
-        // ── 参考图 / 提示词库（沿用既有持久化）────────────────────────────
-
-        private ObservableCollection<ReferenceImageItem> _referenceImages;
-        public ObservableCollection<ReferenceImageItem> ReferenceImages
-        {
-            get => _referenceImages;
-            set { _referenceImages = value; OnPropertyChanged(); }
-        }
-
-        private ReferenceImageItem _selectedReferenceImage;
-        public ReferenceImageItem SelectedReferenceImage
-        {
-            get => _selectedReferenceImage;
-            set { _selectedReferenceImage = value; OnPropertyChanged(); }
-        }
+        // ── 参考图（持久化在 AppSettings，这里只留运行时集合）──────────────
 
         private ObservableCollection<ReferenceImageItem> _activeReferenceImages = new ObservableCollection<ReferenceImageItem>();
         public ObservableCollection<ReferenceImageItem> ActiveReferenceImages
         {
             get => _activeReferenceImages;
             set { _activeReferenceImages = value ?? new ObservableCollection<ReferenceImageItem>(); OnPropertyChanged(); }
-        }
-
-        private ObservableCollection<PromptTemplate> _promptTemplates;
-        public ObservableCollection<PromptTemplate> PromptTemplates
-        {
-            get => _promptTemplates;
-            set { _promptTemplates = value; OnPropertyChanged(); }
         }
 
         private ObservableCollection<PromptHistoryItem> _promptHistory;
@@ -425,42 +380,12 @@ namespace AIRenderer.Models
             set { _promptHistory = value; OnPropertyChanged(); }
         }
 
-        private bool _isPromptHistoryExpanded;
-        public bool IsPromptHistoryExpanded
-        {
-            get => _isPromptHistoryExpanded;
-            set { _isPromptHistoryExpanded = value; OnPropertyChanged(); }
-        }
-
-        // ── 兼容批量窗口的旧绑定（主界面已不再使用这几项）──────────────
-        public ModelItem SelectedModelItem
-        {
-            get => ModelList.Find(m => m.Model == SelectedModel);
-            set { if (value != null) SelectedModel = value.Model; OnPropertyChanged(); }
-        }
-
-        public List<StyleTemplate> StyleTemplates { get; } = new List<StyleTemplate>();
-
-        private StyleTemplate _selectedStyle;
-        public StyleTemplate SelectedStyle
-        {
-            get => _selectedStyle;
-            set { _selectedStyle = value; OnPropertyChanged(); }
-        }
-
         public event PropertyChangedEventHandler PropertyChanged;
 
         protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
-    }
-
-    /// <summary>旧风格模板类型：仅为兼容批量窗口的绑定而保留，不再有内置样式</summary>
-    public class StyleTemplate
-    {
-        public string Name { get; set; }
-        public string Prompt { get; set; }
     }
 
     public class PromptTemplate

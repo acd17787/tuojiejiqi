@@ -12,18 +12,6 @@ namespace AIRenderer.Models
         ApiYi = 0
     }
 
-    public class CustomProviderConfig
-    {
-        public string Id { get; set; }
-        public string DisplayName { get; set; } = "";
-        public string BaseUrl { get; set; } = "";
-        public string AuthType { get; set; } = "bearer";
-        /// <summary>openai = 通用 OpenAI Images（/images/edits）；images_generations = API易兼容 Generations</summary>
-        public string ApiFormat { get; set; } = "openai";
-        public List<string> Models { get; set; } = new List<string>();
-        public string DefaultModel { get; set; } = "";
-    }
-
     public class ProviderItem
     {
         public string Id { get; set; }
@@ -31,11 +19,8 @@ namespace AIRenderer.Models
         public string BaseUrl { get; set; }
         public List<string> Models { get; set; } = new List<string>();
         public string DefaultModel { get; set; }
-        public bool IsCustom { get; set; }
-        public string AuthType { get; set; } = "bearer";
         /// <summary>openai = 通用 OpenAI Images；images_generations = API易兼容 Generations</summary>
         public string ApiFormat { get; set; } = "openai";
-        public string ApiKeyUrl { get; set; }
         public ApiProvider? BuiltInProvider { get; set; }
 
         public static ProviderItem FromBuiltIn(ApiProviderConfig config)
@@ -49,31 +34,8 @@ namespace AIRenderer.Models
                 BaseUrl = NormalizeBaseUrl(config.BaseUrl),
                 Models = config.Models ?? new List<string>(),
                 DefaultModel = config.DefaultModel,
-                IsCustom = false,
-                AuthType = "bearer",
                 ApiFormat = config.ApiFormat,
-                ApiKeyUrl = config.ApiKeyUrl,
                 BuiltInProvider = config.Provider
-            };
-        }
-
-        public static ProviderItem FromCustom(CustomProviderConfig config)
-        {
-            var models = config.Models ?? new List<string>();
-            return new ProviderItem
-            {
-                Id = config.Id,
-                DisplayName = config.DisplayName,
-                BaseUrl = NormalizeBaseUrl(config.BaseUrl),
-                Models = models,
-                DefaultModel = !string.IsNullOrEmpty(config.DefaultModel)
-                    ? config.DefaultModel
-                    : (models.Count > 0 ? models[0] : ""),
-                IsCustom = true,
-                AuthType = config.AuthType ?? "bearer",
-                ApiFormat = config.ApiFormat ?? "openai",
-                ApiKeyUrl = null,
-                BuiltInProvider = null
             };
         }
 
@@ -147,8 +109,6 @@ namespace AIRenderer.Models
         public string BaseUrl { get; set; }
         public List<string> Models { get; set; }
         public string DefaultModel { get; set; }
-        public Dictionary<string, string> ModelDisplayNames { get; set; }
-        public string ApiKeyUrl { get; set; }
         public string ApiFormat { get; set; } = "images_generations";
 
         public static ApiProviderConfig GetConfig(ApiProvider provider)
@@ -165,21 +125,8 @@ namespace AIRenderer.Models
                     ProviderItem.ApiYiDefaultFastModel,
                     ProviderItem.ApiYiDefaultStdModel,
                     "gpt-image-2.5-sunburst"
-                },
-                ModelDisplayNames = new Dictionary<string, string>
-                {
-                    { ProviderItem.ApiYiDefaultFastModel, "GPT Image 2.5 All（快速）" },
-                    { ProviderItem.ApiYiDefaultStdModel, "GPT Image 2.5 VIP（标准）" },
-                    { "gpt-image-2.5-sunburst", "GPT Image 2.5 Sunburst（蒙版）" }
-                },
-                ApiKeyUrl = "https://api.apiyi.com/"
+                }
             };
         }
-
-        public static List<ApiProviderConfig> GetAllProviders()
-            => new List<ApiProviderConfig> { GetConfig(ApiProvider.ApiYi) };
-
-        public static List<ProviderItem> GetAllProviderItems()
-            => new List<ProviderItem> { ProviderItem.FromBuiltIn(GetConfig(ApiProvider.ApiYi)) };
     }
 }
