@@ -1,0 +1,44 @@
+name: Gate
+
+# 发布门禁第一层里的纯文件级检查（2~5 项）：push / PR 时自动跑，
+# 让「编译零警告 + StaticResource 顺序 + 绑定 + 布局契约 + 渲染回归」在合入前就被强制。
+# 完整第一层（含需要 Rhino 与探针 staging 的 6~9 项）仍以本地 tools\release-test.bat 为准。
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  file-level-gate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '7.0.x'
+
+      - name: StaticResource forward-reference check
+        run: python tools/static_resource_order_check.py
+
+      - name: Binding audit
+        run: python tools/binding_audit.py
+
+      - name: Layout contract check
+        run: python tools/layout_contract_check.py
+
+      - name: UI harness (offscreen render, wide)
+        run: |
+          python tools/ui-harness/gen_window.py
+          dotnet run --project tools/ui-harness/UiHarness.csproj -c Release -- 960 1265
+
+      - name: UI harness (offscreen render, narrow)
+        run: dotnet run --project tools/ui-harness/UiHarness.csproj -c Release --no-build -- 1500 1000
