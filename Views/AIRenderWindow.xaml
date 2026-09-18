@@ -1306,7 +1306,7 @@
                     Margin="0,0,84,0" Width="368"
                     Background="White" BorderBrush="{StaticResource LineBrush}" BorderThickness="1,0,0,0"
                     Panel.ZIndex="20" Visibility="{Binding HistoryPanelVisibility}"
-                    MouseLeftButtonUp="FloatPanel_MouseLeftButtonUp">
+                    MouseLeftButtonDown="FloatPanel_MouseLeftButtonDown">
                 <Border.Effect>
                     <DropShadowEffect BlurRadius="30" ShadowDepth="-8" Direction="180" Opacity="0.10" Color="#101828"/>
                 </Border.Effect>
@@ -1438,7 +1438,7 @@
                     Background="White" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                     CornerRadius="12" Padding="16" Panel.ZIndex="30"
                     Visibility="{Binding SettingsPanelVisibility}"
-                    MouseLeftButtonUp="FloatPanel_MouseLeftButtonUp">
+                    MouseLeftButtonDown="FloatPanel_MouseLeftButtonDown">
                 <Border.Effect>
                     <DropShadowEffect BlurRadius="36" ShadowDepth="6" Opacity="0.18" Color="#101828"/>
                 </Border.Effect>

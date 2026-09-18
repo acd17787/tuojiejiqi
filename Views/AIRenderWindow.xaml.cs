@@ -70,6 +70,7 @@ namespace AIRenderer.Views
                 _viewModel.SourceLayoutChanged -= OnSourceLayoutChanged;
                 _viewModel.MaskStrokesCleared -= OnMaskStrokesCleared;
                 _viewModel.SetMaskBitmapProvider(null);
+                _viewModel.Dispose();
             };
         }
 
@@ -80,7 +81,8 @@ namespace AIRenderer.Views
 
         private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            // 点空白处收起浮层；抽屉/弹层内部的点击在 FloatPanel_MouseLeftButtonUp 里被吃掉
+            // 点空白处收起浮层。抽屉/弹层内部的点击由 FloatPanel_MouseLeftButtonDown 吃掉——
+            // 必须同样是 Down：挂在 Up 上时，Down 早就冒泡到这里了，拦不住。
             _viewModel.CloseFloatPanels();
         }
 
@@ -116,9 +118,10 @@ namespace AIRenderer.Views
             }
         }
 
-        private void FloatPanel_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        private void FloatPanel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            // 抽屉 / 弹层内部的点击不冒泡到窗口，否则会被「点空白收起浮层」误关
+            // 抽屉 / 弹层内部的点击（含空白与内边距）不冒泡到窗口，否则会被「点空白收起浮层」误关。
+            // 挂在 Down 上才能拦住窗口的 Down 判定；挂在 Up 上等于没挂。
             e.Handled = true;
         }
 
@@ -496,6 +499,22 @@ namespace AIRenderer.Views
             return Math.Min(renderedWidth / source.PixelWidth, renderedHeight / source.PixelHeight);
         }
 
+        /// <summary>
+        /// 预览区里图片的居中偏移。Viewbox 是 Uniform：长宽比与原图不一致时（除 3:2 之外的所有比例）
+        /// 内容会被居中摆放，而墨迹画布的左上角与预览格对齐，所以换算回原图像素前必须先减掉这个偏移，
+        /// 否则涂抹位置会整体偏掉（方图在 3:2 预览里约偏 1/4 图宽）。
+        /// </summary>
+        private (double X, double Y) GetPreviewOrigin()
+        {
+            var source = _viewModel?.SourceImage;
+            if (source == null || source.PixelWidth <= 0 || source.PixelHeight <= 0)
+                return (0, 0);
+
+            var scale = GetPreviewScale();
+            return ((SourceViewbox.ActualWidth - source.PixelWidth * scale) / 2,
+                    (SourceViewbox.ActualHeight - source.PixelHeight * scale) / 2);
+        }
+
         private void HideBrushCursor()
         {
             BrushCursor.Visibility = Visibility.Collapsed;
@@ -519,6 +538,7 @@ namespace AIRenderer.Views
             if (scale <= 0 || double.IsNaN(scale) || double.IsInfinity(scale))
                 scale = 1;
 
+            var origin = GetPreviewOrigin();
             var mask = new System.Drawing.Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
             using (var graphics = System.Drawing.Graphics.FromImage(mask))
             using (var transparent = new DrawingSolidBrush(DrawingColor.FromArgb(0, 255, 255, 255)))
@@ -527,16 +547,19 @@ namespace AIRenderer.Views
                 graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
                 foreach (var stroke in MaskInkCanvas.Strokes)
-                    DrawStroke(graphics, stroke, transparent, scale);
+                    DrawStroke(graphics, stroke, transparent, scale, origin.X, origin.Y);
             }
 
             return mask;
         }
 
-        private static void DrawStroke(System.Drawing.Graphics graphics, Stroke stroke, DrawingSolidBrush transparent, double scale)
+        private static void DrawStroke(System.Drawing.Graphics graphics, Stroke stroke,
+                                       DrawingSolidBrush transparent, double scale,
+                                       double offsetX, double offsetY)
         {
+            // 先减居中偏移再除缩放：墨迹坐标是「预览格坐标」，原点在格子左上角，不是图片左上角
             var points = stroke.StylusPoints
-                .Select(p => new DrawingPointF((float)(p.X / scale), (float)(p.Y / scale)))
+                .Select(p => new DrawingPointF((float)((p.X - offsetX) / scale), (float)((p.Y - offsetY) / scale)))
                 .ToArray();
             if (points.Length == 0)
                 return;

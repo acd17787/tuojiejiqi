@@ -23,7 +23,7 @@ namespace AIRenderer.Services
     /// 所有请求都经 SidecarHttpMessageHandler，Rhino 进程内不直接访问外网。
     /// Google / Gemini / Vertex 相关调用与字段已彻底移除。
     /// </summary>
-    public class AIRenderService
+    public class AIRenderService : IDisposable
     {
         private readonly HttpClient _httpClient;
         private static readonly HttpClient DownloadClient = new HttpClient(new SidecarHttpMessageHandler());
@@ -37,6 +37,12 @@ namespace AIRenderer.Services
                 Timeout = TimeSpan.FromMinutes(10)
             };
         }
+
+        /// <summary>
+        /// 释放 HttpClient 会连带释放 SidecarHttpMessageHandler，从而递减 sidecar 的引用计数；
+        /// 不释放的话每开一次窗口就多一份 handler，计数只增不减，sidecar 进程无法回收。
+        /// </summary>
+        public void Dispose() => _httpClient?.Dispose();
 
         // ── 对外入口（保持既有签名，批量流程继续可用）────────────────────
 
@@ -328,7 +334,7 @@ namespace AIRenderer.Services
 
         private async Task<Bitmap> DownloadImageAsync(string url)
         {
-            var response = await DownloadClient.GetAsync(url);
+            using var response = await DownloadClient.GetAsync(url);
             if (!response.IsSuccessStatusCode)
             {
                 LastError = $"下载结果图片失败：{response.StatusCode}";

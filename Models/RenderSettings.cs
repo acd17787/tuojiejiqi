@@ -95,38 +95,19 @@ namespace AIRenderer.Models
 
         // ── 设置弹层里的模型名编辑框：只有点「保存模型设置」才提交 ──────────
 
-        private string _pendingFastModel;
-        private string _pendingStdModel;
-
-        public string PendingFastModel
-        {
-            get => _pendingFastModel ?? FastModel;
-            set { _pendingFastModel = value ?? ""; OnPropertyChanged(); }
-        }
-
-        public string PendingStdModel
-        {
-            get => _pendingStdModel ?? StdModel;
-            set { _pendingStdModel = value ?? ""; OnPropertyChanged(); }
-        }
-
         /// <summary>
         /// 提交模型名：空值回退默认模型名；返回是否发生了空值回退。
-        /// 只有调用方（「保存模型设置」）会调它，输入本身不落库。
+        /// 入参由界面传入——这里原本读自己的两个字段，但那是另一份从来没人赋值的副本，
+        /// 导致用户在设置里填的模型名每次保存都被重置回默认值。
         /// </summary>
-        public bool CommitPendingModels()
+        public bool CommitPendingModels(string pendingFast, string pendingStd)
         {
-            var fast = (_pendingFastModel ?? "").Trim();
-            var std = (_pendingStdModel ?? "").Trim();
+            var fast = (pendingFast ?? "").Trim();
+            var std = (pendingStd ?? "").Trim();
             var fellBack = fast.Length == 0 || std.Length == 0;
 
             FastModel = fast.Length == 0 ? ProviderItem.ApiYiDefaultFastModel : fast;
             StdModel = std.Length == 0 ? ProviderItem.ApiYiDefaultStdModel : std;
-
-            _pendingFastModel = FastModel;
-            _pendingStdModel = StdModel;
-            OnPropertyChanged(nameof(PendingFastModel));
-            OnPropertyChanged(nameof(PendingStdModel));
             return fellBack;
         }
 

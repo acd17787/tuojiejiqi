@@ -23,7 +23,7 @@ namespace AIRenderer.ViewModels
     /// 主窗口 ViewModel：一一对应 prototype/tuojie-ai-renderer.html 的状态机
     /// （原图 / 蒙版 / 生成结果 / 参考图 / 模式与尺寸 / 提示词 / 两套历史 / 浮层互斥）。
     /// </summary>
-    public class AIRenderViewModel : INotifyPropertyChanged
+    public class AIRenderViewModel : INotifyPropertyChanged, IDisposable
     {
         /// <summary>参考图上限（图 2..图 4）</summary>
         public const int MaxReferences = 3;
@@ -85,6 +85,9 @@ namespace AIRenderer.ViewModels
                 _toastTimer.Stop();
                 if (Toasts.Count > 0)
                     Toasts.RemoveAt(0);
+                // 还有排队中的就继续跑，否则第二条起会永远挂在界面上
+                if (Toasts.Count > 0)
+                    _toastTimer.Start();
             };
 
             // 生成进度：真实进度只能等接口返回，这里给一个爬到 90% 的观感进度（完成时直接 100%）
@@ -1173,6 +1176,9 @@ namespace AIRenderer.ViewModels
 
         public void SetMaskBitmapProvider(Func<Bitmap> provider) => _maskBitmapProvider = provider;
 
+        /// <summary>窗口关闭时释放：内部 HttpClient 持有 sidecar handler，不释放会累积引用计数</summary>
+        public void Dispose() => _apiService?.Dispose();
+
         private async Task GenerateStandardAsync(string prompt)
         {
             var provider = Settings.SelectedProviderItem
@@ -1498,11 +1504,13 @@ namespace AIRenderer.ViewModels
         /// <summary>模型名：只有点「保存模型设置」才提交，留空回退默认并提示</summary>
         public void SaveModelSettings()
         {
+            // 判定要跟 getter 语义一致：字段为 null 时界面显示的就是 Settings 里的值，
+            // 用户没编辑过就不该判成「有改动」。
             var changed =
-                !string.Equals((_pendingFastModel ?? "").Trim(), Settings.FastModel, StringComparison.Ordinal) ||
-                !string.Equals((_pendingStdModel ?? "").Trim(), Settings.StdModel, StringComparison.Ordinal);
+                !string.Equals((_pendingFastModel ?? Settings.FastModel).Trim(), Settings.FastModel, StringComparison.Ordinal) ||
+                !string.Equals((_pendingStdModel ?? Settings.StdModel).Trim(), Settings.StdModel, StringComparison.Ordinal);
 
-            var fellBack = Settings.CommitPendingModels();
+            var fellBack = Settings.CommitPendingModels(PendingFastModel, PendingStdModel);
             if (changed)
             {
                 SettingsService.SaveRenderSettings(Settings);
