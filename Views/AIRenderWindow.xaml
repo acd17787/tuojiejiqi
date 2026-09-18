@@ -1,4 +1,4 @@
-<Window x:Class="AIRenderer.Views.AIRenderWindow"
+﻿<Window x:Class="AIRenderer.Views.AIRenderWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:AIRenderer.Views"
@@ -590,7 +590,7 @@
             </Grid.ColumnDefinitions>
 
             <!-- ─────────── 内容区（纵向滚动，禁止整体缩放）─────────── -->
-            <ScrollViewer x:Name="ContentScroll" Grid.Column="0"
+            <ScrollViewer Grid.Column="0"
                           Style="{StaticResource OverlayScrollViewer}"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
@@ -599,7 +599,7 @@
                     <Style TargetType="ScrollBar" BasedOn="{StaticResource SlimScrollBar}"/>
                 </ScrollViewer.Resources>
 
-                <Grid x:Name="ContentRoot">
+                <Grid>
                     <!-- 内容区左右内边距：宽窗 16/18，≤1120px 收紧到 14（对应原型 @media 1120） -->
                     <Grid.Margin>
                         <Binding Path="IsNarrow" Converter="{StaticResource AdaptiveContentMargin}"/>
@@ -626,7 +626,7 @@
                           Margin="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=source.margin}">
                         <!-- 阴影层：卡片本体不挂 Effect，否则卡片里的中文小字会发虚 -->
                         <Border Style="{StaticResource CardShadowLayer}"/>
-                        <Border x:Name="SourceCard" Style="{StaticResource Card}">
+                        <Border Style="{StaticResource Card}">
                         <Grid VerticalAlignment="Top">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -732,7 +732,7 @@
                                     </Button>
 
                                     <!-- 有原图：点击看大图。蒙版编辑时显式让出命中测试，把指针完全交给 InkCanvas -->
-                                    <Button x:Name="SourcePreviewHitArea" Background="Transparent" BorderThickness="0"
+                                    <Button Background="Transparent" BorderThickness="0"
                                             Cursor="Hand" Panel.ZIndex="2"
                                             Click="SourcePreview_Click"
                                             Visibility="{Binding HasSourceImage, Converter={StaticResource BoolToVis}}"
@@ -800,7 +800,7 @@
                                             <StackPanel Orientation="Horizontal" Margin="10,0,0,0" VerticalAlignment="Center">
                                                 <TextBlock Text="画笔大小" FontSize="12.5" Foreground="{StaticResource Text2Brush}"
                                                            VerticalAlignment="Center"/>
-                                                <Slider x:Name="BrushSizeSlider" Width="104" Margin="8,0,0,0"
+                                                <Slider Width="104" Margin="8,0,0,0"
                                                         Minimum="8" Maximum="140" TickFrequency="2"
                                                         IsSnapToTickEnabled="True" VerticalAlignment="Center"
                                                         Value="{Binding MaskBrushSize, Mode=TwoWay}"
@@ -861,7 +861,7 @@
                           Margin="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=result.margin}">
                         <!-- 阴影层：卡片本体不挂 Effect，否则卡片里的中文小字会发虚 -->
                         <Border Style="{StaticResource CardShadowLayer}"/>
-                        <Border x:Name="ResultCard" Style="{StaticResource Card}">
+                        <Border Style="{StaticResource Card}">
                         <Grid VerticalAlignment="Top">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -920,7 +920,7 @@
                                 </StackPanel>
                             </Grid>
 
-                            <Border x:Name="ResultPreviewBorder" Grid.Row="1" VerticalAlignment="Top"
+                            <Border Grid.Row="1" VerticalAlignment="Top"
                                     Height="{Binding ActualWidth, ElementName=SourcePreviewBorder, Converter={StaticResource PreviewHeight}}"
                                     Background="{StaticResource PreviewBgBrush}"
                                     BorderBrush="{StaticResource CardLineBrush}" BorderThickness="1"
@@ -962,7 +962,7 @@
                                                 </Border>
                                             </ControlTemplate>
                                         </Button.Template>
-                                        <Image x:Name="ResultImageElement" Source="{Binding ResultImage}" Stretch="Uniform"/>
+                                        <Image Source="{Binding ResultImage}" Stretch="Uniform"/>
                                     </Button>
                                 </Grid>
                             </Border>
@@ -977,7 +977,7 @@
                           Margin="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=reference.margin}">
                         <!-- 阴影层：卡片本体不挂 Effect，否则卡片里的中文小字会发虚 -->
                         <Border Style="{StaticResource CardShadowLayer}"/>
-                        <Border x:Name="ReferenceCard" Style="{StaticResource Card}">
+                        <Border Style="{StaticResource Card}">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -1075,7 +1075,7 @@
                           Margin="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=settings.margin}">
                         <!-- 阴影层：卡片本体不挂 Effect，否则卡片里的中文小字会发虚 -->
                         <Border Style="{StaticResource CardShadowLayer}"/>
-                        <Border x:Name="SettingsCard" Style="{StaticResource Card}">
+                        <Border Style="{StaticResource Card}">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -1192,7 +1192,7 @@
                     </Grid>
 
                     <!-- ══════ 提示词 ══════ -->
-                    <StackPanel x:Name="PromptBlock" Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3"
+                    <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3"
                                 Margin="0,14,0,0">
                         <!-- 左内缩 = 卡片边框 1 + 卡片 padding 17，让标题落在卡片内容线上（x=34） -->
                         <TextBlock Text="提示词" FontSize="14" FontWeight="SemiBold" Foreground="#141A26"
@@ -1204,7 +1204,7 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <Grid Grid.Column="0">
-                                <TextBox x:Name="PromptBox" Style="{StaticResource PromptInput}" Height="96"
+                                <TextBox Style="{StaticResource PromptInput}" Height="96"
                                          Text="{Binding PromptText, UpdateSourceTrigger=PropertyChanged}"
                                          AcceptsReturn="True" TextWrapping="Wrap"
                                          VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"
@@ -1224,7 +1224,7 @@
                     </StackPanel>
 
                     <!-- ══════ 提示词历史（默认折叠）══════ -->
-                    <Border x:Name="PromptHistoryCard" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3"
+                    <Border Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3"
                             Margin="0,14,0,0" Background="White"
                             BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="16">
                         <StackPanel>
@@ -1320,7 +1320,7 @@
             <Border Grid.Column="1" Width="84" Background="#FFFFFF"
                     BorderBrush="{StaticResource LineBrush}" BorderThickness="1,0,0,0">
                 <StackPanel Margin="0,12">
-                    <Button x:Name="HistoryRailButton" Style="{StaticResource RailButton}"
+                    <Button Style="{StaticResource RailButton}"
                             Click="HistoryRailButton_Click"
                             local:InteractiveHelper.IsActive="{Binding IsHistoryPanelOpen, Mode=OneWay}"
                             ToolTip="历史记录">
@@ -1338,7 +1338,7 @@
                         </StackPanel>
                     </Button>
                     <Border Height="1" Width="52" Background="{StaticResource LineBrush}" Margin="0,8"/>
-                    <Button x:Name="SettingsRailButton" Style="{StaticResource RailButton}"
+                    <Button Style="{StaticResource RailButton}"
                             Click="SettingsRailButton_Click"
                             local:InteractiveHelper.IsActive="{Binding IsSettingsPanelOpen, Mode=OneWay}"
                             ToolTip="设置">
