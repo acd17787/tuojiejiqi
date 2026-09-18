@@ -139,6 +139,25 @@ try {
     $net7 = Join-Path $releaseRoot "net7.0-windows"
     $net48 = Join-Path $releaseRoot "net48"
 
+    Step "Static Checks"
+    # These three cover the "builds clean, breaks at runtime" class:
+    #   static_resource_order_check - StaticResource forward references. XAML
+    #     compiler does not catch these; the window throws XamlParseException on open.
+    #   binding_audit - binding paths pointing at members that do not exist
+    #     (silent failure: the UI just shows nothing).
+    #   layout_contract_check - wide/narrow layout and mask z-order contracts.
+    # NOTE: keep this file ASCII-only and without BOM. Windows PowerShell 5.1 reads
+    # .ps1 as ANSI when there is no BOM, so non-ASCII text breaks the parser.
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if ($null -eq $python) {
+        Fail "python not found on PATH; static checks cannot run (install Python 3, or run tools\*.py by hand)"
+    } else {
+        Run "python tools\static_resource_order_check.py"
+        Run "python tools\binding_audit.py"
+        Run "python tools\layout_contract_check.py"
+        Pass "static checks passed"
+    }
+
     Step "Release Files net7"
     foreach ($file in @(
         "TuoJie.rhp",

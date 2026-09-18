@@ -11,6 +11,18 @@ bin\Release\net7.0-windows\
 - [ ] Run `tools\preflight-release.bat`.
 - [ ] Confirm final line is `Preflight passed.`
 - [ ] Confirm no `[FAIL]`, `[BAD]`, or `[MISSING]` remains in the output.
+- [ ] Requires Python 3 on `PATH`（`Static Checks` 步骤会跑下面三个脚本；缺 Python 会直接 FAIL）。
+
+`Static Checks` 步骤拦的是「编译 0 错、运行才炸」这一类问题：
+
+| 脚本 | 拦什么 |
+| --- | --- |
+| `tools\static_resource_order_check.py` | `StaticResource` 前向引用。用反了 `dotnet build` 依然 0 错 0 警告，只在窗口打开时抛 `XamlParseException: 无法找到名为 X 的资源`。 |
+| `tools\binding_audit.py` | 绑定路径指向不存在的成员，同样是静默失败（界面上什么都不显示）。 |
+| `tools\layout_contract_check.py` | 宽窄两套排版与蒙版层级的结构契约（卡片列/跨列、上边距共用 `layoutRow`、InkCanvas 在显示层之上）。 |
+
+> `layout_contract_check.py` 用 `ContentRoot` / `SourcePreviewHitArea` 两个 `x:Name`
+> 当定位锚点，代码后置并不使用它们——清理「无用 x:Name」时别删这两个。
 
 ## 2. Rhino Main Flow
 
