@@ -290,8 +290,9 @@ namespace AIRenderer.ViewModels
             get
             {
                 if (IsGenerating) return "正在生成…";
-                if (!HasSourceImage) return "请先导入模型或上传原图";
-                if (string.IsNullOrWhiteSpace(PromptText)) return "请输入提示词";
+                if (string.IsNullOrWhiteSpace(PromptText))
+                    return HasSourceImage ? "请输入提示词" : "请输入提示词（未导入原图时按纯文生图出图）";
+                if (!HasSourceImage) return "未导入原图，将按提示词直接生成（纯文生图）";
                 if (Settings.IsMaskEditing && !HasMaskStrokes) return "请先涂抹需要重绘的区域";
                 return "开始生成";
             }
@@ -299,7 +300,6 @@ namespace AIRenderer.ViewModels
 
         public bool CanGenerate =>
             !IsGenerating &&
-            HasSourceImage &&
             !string.IsNullOrWhiteSpace(PromptText) &&
             !string.IsNullOrWhiteSpace(Settings.ApiKey) &&
             (!Settings.IsMaskEditing || HasMaskStrokes);
@@ -1144,12 +1144,6 @@ namespace AIRenderer.ViewModels
         {
             if (IsGenerating)
                 return;
-
-            if (!HasSourceImage)
-            {
-                Toast("请先导入模型或上传原图");
-                return;
-            }
 
             var prompt = (PromptText ?? "").Trim();
             if (prompt.Length == 0)

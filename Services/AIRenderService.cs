@@ -72,6 +72,13 @@ namespace AIRenderer.Services
                     if (ProviderItem.IsApiYiHost(baseUrl))
                         return await PostGenerationsAsync(baseUrl, apiKey, body, requestImage, references, settings, size);
 
+                    // edits 接口是 multipart，必须有图；纯文生图只走 API易 那条 JSON 链路
+                    if (requestImage == null)
+                    {
+                        LastError = "当前中转站不支持纯文生图，请先导入原图或上传图片";
+                        return null;
+                    }
+
                     return await PostEditsAsync(baseUrl, apiKey, body, requestImage, references, settings, size, null);
                 }
             }
@@ -98,7 +105,7 @@ namespace AIRenderer.Services
             Bitmap referenceImage = null)
         {
             LastError = null;
-            if (!ValidateRequest(apiKey, currentView))
+            if (!ValidateRequest(apiKey, currentView, requireSource: true))
                 return null;
 
             var references = new List<Bitmap>();
@@ -119,6 +126,13 @@ namespace AIRenderer.Services
                     var size = ResolveSize(settings);
                     if (ProviderItem.IsApiYiHost(baseUrl))
                         return await PostGenerationsAsync(baseUrl, apiKey, body, requestImage, references, settings, size);
+
+                    // edits 接口是 multipart，必须有图；纯文生图只支持 API易 那条 JSON 链路
+                    if (requestImage == null)
+                    {
+                        LastError = "当前中转站不支持纯文生图，请先导入原图或上传图片";
+                        return null;
+                    }
 
                     return await PostEditsAsync(baseUrl, apiKey, body, requestImage, references, settings, size, null);
                 }
@@ -353,11 +367,13 @@ namespace AIRenderer.Services
 
         // ── 参数与图像准备 ────────────────────────────────────────────────
 
-        private static bool ValidateRequest(string apiKey, Bitmap sourceImage)
-        {
-            // 参数校验：具体错误信息由调用方从 LastError 读取
-            return !string.IsNullOrWhiteSpace(apiKey) && sourceImage != null;
-        }
+        /// <summary>
+        /// 参数校验（具体错误信息由调用方从 LastError 读取）。
+        /// 原图默认可以缺省——API易 的 generations 接口不带 image 数组就是纯文生图；
+        /// 蒙版链路与不支持纯文生图的服务商另行要求原图。
+        /// </summary>
+        private static bool ValidateRequest(string apiKey, Bitmap sourceImage = null, bool requireSource = false)
+            => !string.IsNullOrWhiteSpace(apiKey) && (!requireSource || sourceImage != null);
 
         private static string ResolveBaseUrl(ProviderItem provider, RenderSettings settings)
         {
