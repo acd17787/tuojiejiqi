@@ -196,6 +196,7 @@ namespace AIRenderer.Services
 
         private static AppSettings LoadSettingsInternal()
         {
+            TryImportPackagedSettings();
             try
             {
                 if (File.Exists(SettingsFile))
@@ -219,6 +220,44 @@ namespace AIRenderer.Services
             }
 
             return new AppSettings();
+        }
+
+        /// <summary>
+        /// 首次运行种子配置：发布包里若带有 settings.json（放在插件目录下），且本机
+        /// %APPDATA%\AIRenderer\settings.json 尚不存在，则复制过来作为初始配置，
+        /// 客户开箱即用。已有配置（含升级安装）永远不覆盖；导入失败只记日志，
+        /// 走默认值启动，绝不阻断窗口。注意：种子文件内含 API Key 明文，
+        /// 发布包必须按敏感件对待。
+        /// </summary>
+        private static void TryImportPackagedSettings()
+        {
+            try
+            {
+                if (File.Exists(SettingsFile))
+                    return;
+
+                var pluginDir = Path.GetDirectoryName(typeof(SettingsService).Assembly.Location);
+                if (string.IsNullOrEmpty(pluginDir))
+                    return;
+
+                var seed = Path.Combine(pluginDir, "settings.json");
+                if (!File.Exists(seed))
+                    return;
+
+                lock (_settingsFileLock)
+                {
+                    if (File.Exists(SettingsFile))
+                        return;
+                    if (!Directory.Exists(SettingsFolder))
+                        Directory.CreateDirectory(SettingsFolder);
+                    File.Copy(seed, SettingsFile, overwrite: false);
+                    LogService.Info("Imported packaged settings.json (first-run seed).");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogService.Error("Failed importing packaged settings.json (ignored, using defaults)", ex);
+            }
         }
 
         /// <summary>

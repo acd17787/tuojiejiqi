@@ -78,9 +78,17 @@ copy /y "C:\Program Files\Rhino 8\System\RhinoCommon.dll" bin\Release\net7.0-win
 
 - `verify-api.ps1` 结束时会自清它铺进 `bin` 的验证文件（ApiProbe.*、TuoJie.dll、
   RhinoCommon/Rhino3dm/Eto/Rhino.UI.dll）并停掉 mock 作业——不要删这段逻辑。
-- 手工跑过探针的话，打包前检查 `bin\Release\net7.0-windows\` 里**不得**出现
-  `ApiProbe.*`、`RhinoCommon.dll`、`Eto.dll`、`Rhino.UI.dll`、`TuoJie.dll`——
-  打包步骤是 `cp *.dll` / `cp *.json`，这些残留会被原样打进客户包。
+- 手工跑过探针的话（或门禁中途打断过），打包前检查 `bin\Release\net7.0-windows\`
+  里**不得**出现 `ApiProbe.*`、`RhinoCommon.dll`、`Eto.dll`、`Rhino.UI.dll`、
+  `TuoJie.dll`——打包步骤是 `cp *.dll` / `cp *.json`，这些残留会被原样打进客户包。
+- `settings.json` 种子**必须**在包里（插件目录根）：客户机首次运行自动导入，
+  已有配置不覆盖。它是手工维护的敏感件——内含 API Key 明文，只在发包前确认
+  内容正确（BaseUrl / Key / 模型名），绝不提交 git；CI 产出的 zip 不带种子。
+- **只打 Rhino8 包（2026-09-19 起）**：不再组装/发送 TuoJie-Rhino7-*.zip；
+  net48 仍要构建并通过本层校验（它是 Rhino8 包内的兜底侧车），但 net48 整包
+  仅作内部产物。
+- 探针 staging（1.2 的三步）会重铺 `RhinoCommon.dll` / `TuoJie.dll` /
+  `ApiProbe.*`，但**不会**动种子 settings.json——两者互不干扰。
 
 ---
 

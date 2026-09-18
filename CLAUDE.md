@@ -104,14 +104,19 @@ net7.0-windows 输出：
   TuoJie.rhp + TuoJie.deps.json + TuoJie.runtimeconfig.json
   + TuoJieSidecar.exe + TuoJieSidecar.deps.json + TuoJieSidecar.runtimeconfig.json
   + Newtonsoft.Json.dll + System.Drawing.Common.dll + Microsoft.Win32.SystemEvents.dll
-  + runtimes/ + net48-sidecar/ + diagnose.bat
+  + runtimes/ + net48-sidecar/ + diagnose.bat + settings.json（种子配置）
 → 打包为 TuoJie-Rhino8-*.zip
 
-net48 输出：
-  TuoJie.rhp + TuoJieSidecar.exe
-  + Newtonsoft.Json.dll + System.Drawing.Common.dll + diagnose.bat
-→ 打包为 TuoJie-Rhino7-*.zip
+Rhino7 / net48 整包：**2026-09-19 起停止对外发包，只打 Rhino8 包**。
+net48 目标仍必须构建——它作为 `net48-sidecar\` 兜底侧车打进 Rhino8 包（见构建顺序），
+但不再组装 TuoJie-Rhino7-*.zip，也不发 net48 整包。
 ```
+
+种子配置：settings.json 放在插件目录（bin 输出根）。客户机首次运行且
+`%APPDATA%\AIRenderer\settings.json` 不存在时，SettingsService 自动导入
+（`TryImportPackagedSettings`）；升级安装或已有配置**永不覆盖**。**种子内含
+API Key 明文**：只随本地产出的 zip 发给约定客户，不要提交 git（bin/ 已忽略）；
+CI（release.yml）打包时 bin 不含种子，CI 产出的 zip 是空 Key，需客户自填。
 
 ## CI
 
