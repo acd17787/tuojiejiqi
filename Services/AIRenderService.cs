@@ -508,8 +508,45 @@ namespace AIRenderer.Services
             return sampled == 0 ? 0 : transparent * 100.0 / sampled;
         }
 
+        /// <summary>
+        /// 把接口错误变成一句人话。之前是把 300 字原始 JSON 直接丢给用户：
+        /// 既看不懂（{"error":{"message":...}}），又会把提示条撑满整屏。
+        /// </summary>
         private static string DescribeError(string status, string content)
-            => $"接口返回 {status}：{Truncate(content, 300)}";
+        {
+            var detail = ExtractApiMessage(content);
+            if (IsAuthFailure(status))
+                return $"API Key 无效或已过期，请在设置里检查（接口返回：{detail}）";
+            return $"接口返回 {status}：{detail}";
+        }
+
+        /// <summary>优先取 API易 / OpenAI 风格错误体里的 error.message，取不到再退回截断原文。</summary>
+        private static string ExtractApiMessage(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+                return "无返回内容";
+
+            try
+            {
+                var root = JToken.Parse(content);
+                var message = root?["error"]?["message"]?.ToString()
+                              ?? root?["message"]?.ToString()
+                              ?? root?["error"]?.ToString();
+                if (!string.IsNullOrWhiteSpace(message))
+                    return Truncate(message.Trim(), 160);
+            }
+            catch (JsonException)
+            {
+                // 不是 JSON，按纯文本处理
+            }
+
+            return Truncate(content.Trim(), 160);
+        }
+
+        private static bool IsAuthFailure(string status)
+            => !string.IsNullOrEmpty(status) &&
+               (status.Contains("Unauthorized") || status.Contains("Forbidden") ||
+                status.Contains("401") || status.Contains("403"));
 
         private static string Truncate(string value, int max)
             => string.IsNullOrEmpty(value) || value.Length <= max ? value : value.Substring(0, max) + "…";
