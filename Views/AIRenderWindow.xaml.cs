@@ -382,6 +382,15 @@ namespace AIRenderer.Views
 
         private void OnMaskStrokesCleared(object sender, EventArgs e) => MaskInkCanvas.Strokes.Clear();
 
+        /// <summary>
+        /// 预览格内部的取焦不参与外层滚动。
+        /// 墨迹输入层是按「源图像素尺寸」给的（例如 1672×940），比可视预览区（约 350px 高）大得多；
+        /// 点击取焦时 WPF 默认会对它整体 BringIntoView，外层 ScrollViewer 就去「显示」它，
+        /// 表现为用户一按下鼠标、界面自己往下跳一下。实测未拦截时偏移 78px，拦截后为 0。
+        /// </summary>
+        private void PreviewCell_RequestBringIntoView(object sender, RequestBringIntoViewEventArgs e)
+            => e.Handled = true;
+
         private void SyncSourcePixelImage()
         {
             var image = _viewModel.SourceImage;

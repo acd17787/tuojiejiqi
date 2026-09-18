@@ -653,7 +653,7 @@
                                     Background="{StaticResource PreviewBgBrush}"
                                     BorderBrush="{StaticResource CardLineBrush}" BorderThickness="1"
                                     CornerRadius="14" ClipToBounds="True">
-                                <Grid x:Name="SourcePreviewCell">
+                                <Grid x:Name="SourcePreviewCell" RequestBringIntoView="PreviewCell_RequestBringIntoView">
                                     <!-- 画布格子只在没有图的时候当底纹：有图时留白，别在图片四周露出来 -->
                                     <Rectangle Fill="{StaticResource CanvasGridBrush}"
                                                Visibility="{Binding HasSourceImage, Converter={StaticResource InvBoolToVis}}"/>
@@ -886,7 +886,7 @@
                                     Background="{StaticResource PreviewBgBrush}"
                                     BorderBrush="{StaticResource CardLineBrush}" BorderThickness="1"
                                     CornerRadius="14" ClipToBounds="True">
-                                <Grid>
+                                <Grid RequestBringIntoView="PreviewCell_RequestBringIntoView">
                                     <Rectangle Fill="{StaticResource CanvasGridBrush}"
                                                Visibility="{Binding HasResultImage, Converter={StaticResource InvBoolToVis}}"/>
                                     <!-- 空状态 -->
