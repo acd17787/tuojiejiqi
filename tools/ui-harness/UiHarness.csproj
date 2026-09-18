@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net7.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>harness</AssemblyName>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="RenderWindow.cs" />
+    <!-- 直接复用产品的转换器与附加属性：桩渲染走的就是真实绑定代码 -->
+    <Compile Include="..\..\Views\Converters.cs" />
+    <Compile Include="..\..\Views\InteractiveHelper.cs" />
+    <None Include="window.xaml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

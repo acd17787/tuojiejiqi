@@ -1,182 +1,167 @@
-# TuoJie Customer Release Acceptance Checklist
+# TuoJie 发布验收标准
 
-Use this checklist after `tools\preflight-release.bat` passes. Target package:
+> **每一次对外发布（打 tag / 发包给客户）之前，按本文档执行验收。**
+> 三层门槛，逐层放行：第一层全绿才允许打 tag，第二层全绿才允许把包交给客户，
+> 第三层在正式对外版本上建议执行。
+> 文档本身随代码走版本：验收发现标准缺失或过时，先改本文档再改代码。
 
-```text
-bin\Release\net7.0-windows\
-```
+| 版本 | 日期 | 说明 |
+| --- | --- | --- |
+| 当前 | 2026-09-18 | 重构为三层标准；新增 UI 自动化验收层、渲染回归门禁、打包卫生规则 |
 
-## 1. Automated Gate
+---
 
-- [ ] Run `tools\preflight-release.bat`.
-- [ ] Confirm final line is `Preflight passed.`
-- [ ] Confirm no `[FAIL]`, `[BAD]`, or `[MISSING]` remains in the output.
-- [ ] Requires Python 3 on `PATH`（`Static Checks` 步骤会跑下面三个脚本；缺 Python 会直接 FAIL）。
+## 0. 总则
 
-`Static Checks` 步骤拦的是「编译 0 错、运行才炸」这一类问题：
+| 层 | 内容 | 放行条件 | 费用 |
+| --- | --- | --- | --- |
+| 第一层 | 代码级自动门禁（全脚本，零人工判断） | **全绿才可打 tag** | 零（全部打在本地 mock 上） |
+| 第二层 | 产品操作验收（自动化 UI 轮，跑在真实 Rhino 里） | **全绿才可发包给客户** | 零（BaseUrl 指向本地 mock） |
+| 第三层 | 真实 API 抽测 + 人工目测 + 特殊环境 | 正式对外版建议执行 | 受控（明确预算） |
 
-| 脚本 | 拦什么 |
+**阻断定义**：`[FAIL]` / `[BAD]` / `[MISSING]` / 脚本非零退出 = 阻断，必须修复或经用户明确豁免后降级记录，不允许静默跳过。
+
+**费用红线**：任何自动化验证不得调用真实生图接口（历史约定：真实生成有成本）。
+网络层验证一律指向本地 mock；真实 API 只出现在第三层的预算化抽测里。
+
+---
+
+## 1. 第一层：代码级自动门禁
+
+按顺序执行，全绿才继续。每一条都拦截过真实发生过的问题（「拦什么」一栏是判例）。
+
+| # | 命令（仓库根目录） | 通过标准 | 拦什么 |
+| --- | --- | --- | --- |
+| 1 | `bash tools/build-release.sh` | `0 个错误 0 个警告`；末尾 `OK` 列出 TuoJie.rhp / TuoJieSidecar.exe / TuoJieSidecar-net48.exe / net48-sidecar\TuoJieSidecar.exe | 编译错误；sidecar 产物缺失（net7 apphost 未 publish 等） |
+| 2 | `python tools/static_resource_order_check.py` | `PASS` | StaticResource 前向引用——**编译 0 错、窗口打开才炸** 的那类（XamlParseException） |
+| 3 | `python tools/binding_audit.py` | `失效绑定: 0` | 绑定路径指向不存在的成员（静默失败：界面上什么都不显示） |
+| 4 | `python tools/layout_contract_check.py` | `PASS` | 宽窄两套排版契约（卡片列/跨列、**行不得撞格**、上边距共用 layoutRow）、蒙版层级、画布尺寸绑定守卫 |
+| 5 | `cd tools\ui-harness && python gen_window.py && dotnet run -c Release -- 960 1265` | `UIH PASS`，退出码 0 | 渲染回归 + 墨迹画布跟随 Viewbox + 布局自激（同高度两遍布局不一致） |
+| 6 | `powershell -File tools\win-verify\verify-api.ps1` | `ALL PASS` | 协议选路（API易走 generations、其它走 edits）、Bearer 头、size 语义、蒙版模型固定 sunburst、缩略图解码宽度、请求帧形状 |
+| 7 | `CONCURRENCY_PROBE=1 ApiProbe.exe` | 快请求 < 5 秒且两个请求都成功 | 侧车并发退化成串行单实例（快请求等满连接超时后 `Pipe is broken`） |
+| 8 | `CONVERSION_EQUIVALENCE_PROBE=1 ApiProbe.exe` | 全部用例逐字节相同（反向按「不透明像素一致」判定） | 图像转换路径的像素保真回归 |
+| 9 | `powershell -File tools\preflight-release.ps1` | `Preflight passed.`；无 `[FAIL]`/`[BAD]` | 打包完整性、三个包的 diagnose、>1MB 大帧管道、.NET 运行时与 Rhino 检测 |
+
+需要 Rhino / Python / 网络：
+- 1、9 需要 .NET SDK（1 会占用 `bin\TuoJie.rhp`——**Rhino 开着时跑不了，先关 Rhino**）。
+- 6~8 的探针需要 `RhinoCommon.dll` 等 staged 文件，`verify-api.ps1` 会自动布置并在结束时清理。
+- 2~5 纯文件级，任何机器可跑。
+
+### 1.1 变更触发的附加门禁
+
+| 改了什么 | 追加执行 |
 | --- | --- |
-| `tools\static_resource_order_check.py` | `StaticResource` 前向引用。用反了 `dotnet build` 依然 0 错 0 警告，只在窗口打开时抛 `XamlParseException: 无法找到名为 X 的资源`。 |
-| `tools\binding_audit.py` | 绑定路径指向不存在的成员，同样是静默失败（界面上什么都不显示）。 |
-| `tools\layout_contract_check.py` | 宽窄两套排版与蒙版层级的结构契约（卡片列/跨列、上边距共用 `layoutRow`、InkCanvas 在显示层之上）。 |
+| `Sidecar/` 或 `Services/SidecarClient.cs` | 第 7 项并发探针必跑；net48 与 net7 两个侧车目标都要构建 |
+| 图像转换（`ScreenCapture` / `ImageUtil`） | 第 8 项等价性探针必跑；改判定标准要先改探针并说明理由 |
+| XAML 布局 | 第 5 项宽窗 + 窄窗各渲染一次（`-- 960 1265` 与 `-- 1500 1000`），与改动前基线做像素比对 |
+| 蒙版 | 设 `TUOJIE_MASK_DEBUG=1` 复现一轮，肉眼检查 `logs\mask_debug\mask_*.png` 的透明区域与涂抹一致 |
+| 死代码清理 | `python tools/dead_member_audit.py`（只读审；**输出不是删除清单**——JSON 回写字段、Rhino override、XAML 附加属性访问器即使零引用也必须保留） |
 
-> `layout_contract_check.py` 用 `ContentRoot` / `SourcePreviewHitArea` 两个 `x:Name`
-> 当定位锚点，代码后置并不使用它们——清理「无用 x:Name」时别删这两个。
+### 1.2 打包卫生
 
-### 侧车并发探针（改动 Sidecar 或 SidecarClient 后跑）
+- `verify-api.ps1` 结束时会自清它铺进 `bin` 的验证文件（ApiProbe.*、TuoJie.dll、
+  RhinoCommon/Rhino3dm/Eto/Rhino.UI.dll）并停掉 mock 作业——不要删这段逻辑。
+- 手工跑过探针的话，打包前检查 `bin\Release\net7.0-windows\` 里**不得**出现
+  `ApiProbe.*`、`RhinoCommon.dll`、`Eto.dll`、`Rhino.UI.dll`、`TuoJie.dll`——
+  打包步骤是 `cp *.dll` / `cp *.json`，这些残留会被原样打进客户包。
 
-侧车一次生图会占住连接好几分钟，串行处理会让第二个请求连不上、被误判成「卡死」
-然后 Kill。改完这部分代码跑一次这个探针：
+---
 
-```powershell
-# 1) 按 verify-api.ps1 的方式部署探针（复制到插件输出目录 + 补 RhinoCommon）
-# 2) 在该目录下执行：
-$env:CONCURRENCY_PROBE=1; .\ApiProbe.exe
-```
+## 2. 第二层：产品操作验收（自动化 UI 轮）
 
-期望：`快请求 < 5 秒` 且两个请求都成功。若侧车退回串行单实例，快请求会等到
-10 秒连接超时并以 `Pipe is broken` 失败。
+在真实 Rhino 8 里操作真实插件界面跑一轮完整产品流程。**全部打在本地 mock 上，零费用。**
 
-## 2. Rhino Main Flow
+### 2.1 环境
 
-- [ ] Close all Rhino processes before copying or rebuilding the release output.
-- [ ] Drag `bin\Release\net7.0-windows\TuoJie.rhp` into Rhino 8.
-- [ ] Run `AIRender`; confirm the main window opens.
-- [ ] Run `AIRender` a second time while the window is open: no second window appears,
-      the existing one comes to the front, and Rhino prints `AIRender window is already open.`
-      （只允许单实例：两个窗口会互相覆盖对方的设置快照，还会并发占用同一个侧车管道。）
-- [ ] 参考图按会话清理：添加 1~3 张参考图 → 生成一次（状态条应显示「· 参考 N 张」）→
-      再生成一次（仍然带上，调提示词的迭代不被打断）→ 关闭窗口重新打开 →
-      参考图应为空，settings.json 里 `ReferenceImages` 也应为空。
-      卡片头部的「全部清除」应一键移除全部并删除 active-references 里的副本文件。
-      （上限 3 张在任何入口都不应被突破：本地上传、历史结果转参考图、启动回填。）
-- [ ] Open settings and configure APIYI:
-  - Base URL: `https://api.apiyi.com`
-  - Fast model: `gpt-image-2.5-all`
-  - Standard model: `gpt-image-2.5-vip`
-  - Mask edits internally use `gpt-image-2.5-sunburst` (fixed, not configurable)
-  - API key: release-test key
-- [ ] Capture the active viewport and generate one image.
-- [ ] Upload a local image as the source and generate one image.
-- [ ] Close Rhino, reopen Rhino, run `AIRender`, and generate again without re-entering settings.
+1. 用第一层产出的发布包（不是 `bin` 散文件）：解压 zip，把 `TuoJie.rhp` 拖进 Rhino 8。
+2. 启动本地 mock：`powershell -File tools\win-verify\mock-api.ps1 -Port 8899`
+   （它把每个请求记录到 `tools\win-verify\mock-requests.jsonl`——UI 轮的断言后端）。
+3. 插件设置里：BaseUrl = `http://127.0.0.1:8899`，API Key = `release-test key`
+   （任意非空即可），保存。
+4. 结束后：恢复 BaseUrl 为 `https://api.apiyi.com/v1`；停掉 mock。
 
-Pass criteria:
+### 2.2 自动化手段
 
-- [ ] Normal generation succeeds.
-- [ ] Settings persist after Rhino restart.
-- [ ] Images are saved under `%APPDATA%\AIRenderer\history`（单目录方案；`index.json` 只有路径+时间，最多 30 条）。
-- [ ] No Windows crash dialog appears for `TuoJieSidecar.exe`.
+| 环节 | 方式 | 现状 |
+| --- | --- | --- |
+| 拉起插件 | `Rhino.exe /runscript=_(AIRender)`（或 Rhino 内手动执行 `AIRender`） | 手动可行 |
+| UI 驱动 | WPF 控件走 UIA（`System.Windows.Automation`，或 Python + pywinauto）；按可见文本定位（「生成」「参考图像」「全部清除」…） | **驱动脚本待建**（场景与断言已在 2.3 写死，脚本建成后回填执行命令） |
+| 生成类断言 | 读 `mock-requests.jsonl`，断言请求形状（路径 / size / mask / model / image 数量）——`verify-api.ps1` 第 5 节的断言可整体复用 | 已有 |
+| 界面状态断言 | UIA 读状态条 / toast 文本；必要时窗口截图对比 | 待建 |
 
-## 3. APIYI Capability Checks
+> 在驱动脚本建成之前，2.3 的场景由人工按步骤执行、按断言逐条勾选；
+> 建成之后同一张表就是自动化脚本的场景清单。**不允许因为脚本未建而跳过本层。**
 
-> **已确认的产品模型决策（2026-09-18）**：快速出图固定默认
-> `gpt-image-2.5-all`，标准模式固定默认 `gpt-image-2.5-vip`，蒙版固定使用
-> `gpt-image-2.5-sunburst`。第三方不需要再次询问模型名，也不要替换为旧的
-> `image-2`；本节只验证真实接口调用和客户 Key 的模型权限。
+### 2.3 场景表
 
-Normal generation:
+每个场景：步骤 → 自动断言（A）/ 人眼断言（E）。全部通过本层才算绿。
 
-- [ ] Confirm `gpt-image-2.5-all`（快速）和 `gpt-image-2.5-vip`（标准）均能通过 API易成功生成。
-- [ ] If testing a custom non-APIYI OpenAI-compatible host, confirm normal requests use
-      `/v1/images/edits`; API易 hosts use `/v1/images/generations` regardless of the
-      legacy `ApiFormat` metadata.
-- [ ] Generate with a viewport around `1400x840` or `1920x1080`; confirm no `Pipe is broken`.
+**S1 启动与单实例**
+- 执行 `AIRender`，主窗口打开，无异常弹窗。(A: 进程内出现窗口标题 `TuoJie AI Renderer`)
+- 再执行一次 `AIRender`：不出第二个窗口，已有窗口到前台，Rhino 命令行输出
+  `AIRender window is already open.`。
+- 窗口宽度 ≥1120 走宽窗布局；拖窄到 ≤1120 后四张卡片与提示词 / 历史 / 状态条
+  纵向依次排列，无遮挡（呼应布局契约）。(E)
 
-Render modes:
+**S2 设置持久化**
+- 设置 BaseUrl / API Key / 模型名，保存。
+- 关闭 Rhino → 重开 → `AIRender`：设置原样恢复，直接可生成。(A: settings.json 字段比对)
 
-- [ ] Test **快速出图**; it must generate successfully and omit the standard `size` parameter.
-- [ ] Test **标准模式**; it must generate successfully with the selected `size` parameter.
+**S3 快速出图一轮**
+- 选「快速出图」，输入提示词，生成。
+- (A) mock 收到 `POST /v1/images/generations`、**不带 `size`**、带 `image[]`（原图为图1）。
+- (A) 响应 mock 返回 b64_json，界面出现结果图，历史抽屉 +1，`%APPDATA%\AIRenderer\history` 新增 PNG。
+- (E) 结果图清晰、无坏块。
 
-Mask edit:
+**S4 标准模式一轮**
+- 选「标准模式」+ 2K + 16:9，生成。
+- (A) 请求带 `size=2048x1152`。
+- (E) 比例与像素读数一致。
 
-- [ ] Capture a source image.
-- [ ] Start mask edit.
-- [ ] Use a small brush to paint one local region.
-- [ ] Prompt: `只把图中涂抹区域改成浅色木饰面，其他区域保持不变。`
-- [ ] Submit mask edit.
+**S5 蒙版修改一轮**
+- 标准模式，涂抹一小块区域，提示词：`只把图中涂抹区域改成浅色木饰面，其他区域保持不变。`
+- (A) 请求走 `/v1/images/edits`，带 `mask`，模型 = `gpt-image-2.5-sunburst`。
+- (E) 结果只改了涂抹区域；蒙版编辑入口在快速模式下置灰并有提示。
 
-Pass criteria:
+**S6 参考图全生命周期**
+- 上传 2 张本地参考图 → 缩略图按选择顺序出现。(E)
+- 多选超过 3 张 → 只收前 3，第 4 张拒绝。(A: 列表长度恒 ≤3)
+- 「全部清除」→ 全部消失，`active-references` 副本被删，settings.json 列表为空。(A)
+- 重新添加 2 张 → 生成 → (A) `image[]` = 原图 + 2 参考，顺序与显示一致。
+- **关窗重开** → 参考图为空（会话内保留、关窗即清）。(A)
+- 生成时的状态条出现「· 参考 N 张」。(A/E)
 
-- [ ] Mask edit button is enabled in standard mode and disabled in fast mode.
-- [ ] Brush size is adjustable.
-- [ ] Result is visibly related to the painted region.
-- [ ] Failures show API/Sidecar error detail instead of only a generic failure.
-- [ ] Debug mask images are written under `%APPDATA%\AIRenderer\debug\`.
+**S7 历史记录**
+- 生成数次 → 抽屉计数「N / 30」；超过 30 条自动淘汰最旧。(A: 目录文件数)
+- 缩略图点击开灯箱；灯箱「下载」存出的 PNG 与原文件像素一致。(A)
+- 历史条目「添加为参考图」→ 出现在参考卡；删除该历史条目不影响已加的参考图。(A)
 
-## 4. Multi-Image Reference Checks
+**S8 提示词历史**
+- 生成后提示词入历史；重复提示词去重置顶；点历史条目回填输入框。(A/E)
 
-> 参考图入口只有两个：**参考图像（可选）** 卡片里的 `添加参考图`（本地文件，最多 3 张），
-> 以及 **历史记录抽屉** 里的 `添加为参考图`。参考图库弹窗（`ReferenceLibraryDialog`）
-> 主界面已不再挂入口，本节不覆盖。
+**S9 错误路径（不崩）**
+- 停掉 mock 再生成 → 状态条与 toast 给出可读错误（接口错误 / 连接失败），**插件不退出、不白屏**。
+- 恢复 mock 后再生成 → 正常。
 
-Local references:
+---
 
-- [ ] Capture or upload a source image.
-- [ ] Click `添加参考图` and select two local images.
-- [ ] Confirm thumbnails appear in the `参考图像（可选）` card in the same order they were selected.
-- [ ] Confirm the count is capped at 3 (the `添加参考图` button disappears at 3).
-- [ ] Delete one thumbnail with its `×`; confirm the remaining reference stays usable and order is preserved.
-- [ ] Click a thumbnail; confirm the lightbox opens.
+## 3. 第三层：真实 API 与人工抽测
 
-From the history drawer:
+正式对外版建议执行；预算固定，不随意加量。
 
-- [ ] Open `历史记录`, click `添加为参考图` on one entry.
-- [ ] Confirm it appears as the next `图N` in the reference card.
-- [ ] Delete the original history entry; confirm the reference thumbnail still renders
-      (references are copies under `active-references`, not links to history files).
-- [ ] Generate using the already-added reference.
+- [ ] **真实 API 抽测（预算：3 张）**：恢复 `https://api.apiyi.com/v1` + 客户 Key，
+  快速出图、标准模式、蒙版修改各生成 **1 张**，确认客户 Key 对三个默认模型
+  （`gpt-image-2.5-all` / `gpt-image-2.5-vip` / `gpt-image-2.5-sunburst`）有权限。
+  模型权限决策（2026-09-18）：固定这三个模型，不再询问第三方，也不回退旧 `image-2`。
+- [ ] **视觉质量目测**：真实渲染结果与场景的对应关系（材质 / 灯光 / 构图）——自动化判不了。
+- [ ] **防火墙场景**：防火墙拦 `Rhino.exe` 出站、放行 `TuoJieSidecar.exe`，生成成功；
+  侧车日志存在（`%APPDATA%\AIRenderer\logs\sidecar_client_*.log` 与 `sidecar_*.log`）。
+- [ ] **干净机器安装**：解压客户包到全新目录，拖 `TuoJie.rhp` 进 Rhino，跑一次 `diagnose.bat`
+  → `Issues: 0`、sidecar 启动 OK、net48 兜底信息在、无 `[MISSING]`/`[BAD]`。
 
-Pass criteria:
+---
 
-- [ ] Source image is always `图1`.
-- [ ] References are sent in displayed order as `图2..N`.
-- [ ] Deleting a history item does not break active references already added to the current request.
-- [ ] This prompt style works:
-
-```text
-保留图1的空间结构和相机角度。
-参考图2的材质。
-参考图3的灯光氛围。
-生成现代室内效果图。
-```
-
-## 5. Firewall Scenario
-
-Use this only when validating the customer requirement that Rhino cannot access the network.
-
-- [ ] Block `Rhino.exe` outbound in Windows Firewall.
-- [ ] Allow `TuoJieSidecar.exe` outbound.
-- [ ] Generate one image from Rhino.
-- [ ] Confirm Task Manager shows `TuoJieSidecar.exe` during generation.
-
-Pass criteria:
-
-- [ ] Generation succeeds while `Rhino.exe` is blocked.
-- [ ] Sidecar logs exist:
-
-```text
-%APPDATA%\AIRenderer\logs\sidecar_client_*.log
-%APPDATA%\AIRenderer\logs\sidecar_*.log
-```
-
-## 6. Customer Package Diagnose
-
-Run from the final extracted zip folder:
-
-```bat
-diagnose.bat
-```
-
-Pass criteria:
-
-- [ ] `Issues: 0`
-- [ ] Rhino install detection is acceptable.
-- [ ] Sidecar startup is OK.
-- [ ] net48 fallback information is present.
-- [ ] No `[MISSING]` or `[BAD]` line remains.
-
-## Minimum Release Gate Matrix
+## 4. 最低发布门禁矩阵
 
 | Feature | Required Environment | Pass Criteria |
 |---|---|---|
@@ -189,25 +174,47 @@ Pass criteria:
 | Mask edit | Local painted region | Result relates to mask |
 | Local multi-reference | 2 references | 2 references shown in order and used |
 | History multi-reference | History drawer | Add, delete, generate normally |
+| Reference lifecycle | Close & reopen window | References cleared on close; cap 3 never exceeded |
 | Rhino blocked network | Windows Firewall | Sidecar can still generate |
 | Customer diagnose | Extracted package | `Issues: 0` |
 
-## 7. Customer Failure Collection
+---
 
-If the customer reports failure after the package is sent, ask for:
+## 5. 客户故障收集
+
+客户反馈失败时，收集：
 
 ```text
 diagnose.bat full output
 %APPDATA%\AIRenderer\settings.json
 %APPDATA%\AIRenderer\logs\sidecar_client_*.log
 %APPDATA%\AIRenderer\logs\sidecar_*.log
-%APPDATA%\AIRenderer\debug\mask_*.png
 ```
 
-Common customer-only causes:
+蒙版问题额外：让客户设环境变量 `TUOJIE_MASK_DEBUG=1` 复现一次，收集
+`%APPDATA%\AIRenderer\logs\mask_debug\mask_*.png`（默认关闭，不设不写）。
+
+常见客户侧原因：
 
 - Antivirus quarantines `TuoJieSidecar.exe`.
 - Company firewall blocks unknown executables, not only `Rhino.exe`.
 - Proxy or SSL inspection rewrites API responses.
 - Plugin folder is read-only or files were copied incompletely.
 - API key has no access to the selected model.
+
+---
+
+## 6. 发布记录模板
+
+每个版本把下表填全，随发布说明一起存档（贴到 GitHub Release 正文或内部记录）：
+
+```text
+版本：vX.Y.Z        提交：<commit hash>        日期：<yyyy-MM-dd>
+第一层：build-release [OK]  static_resource [OK]  binding [OK]
+        layout [OK]  ui-harness [OK]  verify-api [OK]
+        concurrency [OK]  conversion [OK]  preflight [OK]
+第二层：S1 [OK] S2 [OK] S3 [OK] S4 [OK] S5 [OK]
+        S6 [OK] S7 [OK] S8 [OK] S9 [OK]
+第三层：真 API 抽测 [OK/未执行]  目测 [OK]  防火墙 [OK/未执行]  干净机器 [OK/未执行]
+执行人：            阻断与豁免记录：
+```

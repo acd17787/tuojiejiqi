@@ -116,6 +116,16 @@ Remove-Item (Join-Path $out "ApiProbe.*") -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $out "TuoJie.dll") -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $out "RhinoCommon.dll") -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $out "Rhino3dm.dll") -Force -ErrorAction SilentlyContinue
+# 打包步骤是 cp *.dll / *.json：这些验证残留不清掉，会被原样打进客户包
+Remove-Item (Join-Path $out "Eto.dll") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $out "Rhino.UI.dll") -Force -ErrorAction SilentlyContinue
+
+# mock 是 Start-Job 起的：不收掉会一直占着 8899，下次 verify-api 会
+# 误连旧实例「假通过」（本脚本开头删日志防的就是这件事）
+try {
+  Stop-Job $mockJob -ErrorAction SilentlyContinue
+  Remove-Job $mockJob -Force -ErrorAction SilentlyContinue
+} catch { }
 
 Write-Host ""
 if ($fail -eq 0) { Write-Host "ALL PASS" } else { Write-Host ("FAILED " + $fail + " checks") }
