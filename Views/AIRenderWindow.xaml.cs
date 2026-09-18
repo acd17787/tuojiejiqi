@@ -1,4 +1,4 @@
-using AIRenderer.Models;
+﻿using AIRenderer.Models;
 using AIRenderer.Services;
 using AIRenderer.ViewModels;
 using Microsoft.Win32;
@@ -371,9 +371,8 @@ namespace AIRenderer.Views
 
         /// <summary>
         /// 预览格内部的取焦不参与外层滚动。
-        /// 墨迹输入层是按「源图像素尺寸」给的（例如 1672×940），比可视预览区（约 350px 高）大得多；
-        /// 点击取焦时 WPF 默认会对它整体 BringIntoView，外层 ScrollViewer 就去「显示」它，
-        /// 表现为用户一按下鼠标、界面自己往下跳一下。实测未拦截时偏移 78px，拦截后为 0。
+        /// InkCanvas 拿到焦点时 WPF 默认会对它整体 BringIntoView，外层 ScrollViewer 就去
+        /// 「显示」它，表现为用户一按下鼠标、界面自己往下跳一下。实测未拦截时偏移 78px，拦截后为 0。
         /// </summary>
         private void PreviewCell_RequestBringIntoView(object sender, RequestBringIntoViewEventArgs e)
             => e.Handled = true;
@@ -388,23 +387,27 @@ namespace AIRenderer.Views
                 MaskInkCanvas.Strokes.Clear();
                 _lastMaskSourceWidth = 0;
                 _lastMaskSourceHeight = 0;
+                // 画布尺寸不给 0：它绑定在 Viewbox 的实际渲染尺寸上（无图时 Viewbox 是
+                // Collapsed，绑定自己会归零），这里赋值会把绑定覆盖掉。
                 SourcePixelImage.Width = 0;
                 SourcePixelImage.Height = 0;
-                MaskInkCanvas.Width = 0;
-                MaskInkCanvas.Height = 0;
                 return;
             }
 
             ApplySourcePixelSize(image);
         }
 
-        /// <summary>源图 / 墨迹画布都固定成源图像素尺寸，缩放统一交给 Viewbox</summary>
+        /// <summary>
+        /// 源图固定成源图像素尺寸，缩放交给 Viewbox；墨迹画布不设尺寸——
+        /// 它的 Width/Height 绑定在 XAML 上，跟着 Viewbox 的实际渲染尺寸走。
+        /// 这里直接赋值会覆盖掉那个绑定（给带 Binding 的 DP 赋本地值 = 换掉绑定），
+        /// 画布就变成源图像素尺寸：源图比预览格小时，只有左上角一块能涂，
+        /// 显示出来的其余部分点不上。需要改尺寸就改 XAML 的绑定。
+        /// </summary>
         private void ApplySourcePixelSize(BitmapSource image)
         {
             SourcePixelImage.Width = image.PixelWidth;
             SourcePixelImage.Height = image.PixelHeight;
-            MaskInkCanvas.Width = image.PixelWidth;
-            MaskInkCanvas.Height = image.PixelHeight;
         }
 
         /// <summary>换了原图就丢掉旧蒙版，避免把上一张图的笔迹画到新图上</summary>
@@ -461,10 +464,11 @@ namespace AIRenderer.Views
                 return;
             }
 
-            // 光标尺寸 = 画笔在屏幕上的实际大小（画笔大小是源图像素，需要乘 Viewbox 的缩放）
+            // 光标尺寸 = 笔画在屏幕上的实际大小。墨迹画布是 Viewbox 的兄弟节点、不参与缩放，
+            // DefaultDrawingAttributes.Width 写多少就是多少 DIP，所以这里直接用画笔大小，
+            // 不能再乘 GetPreviewScale（乘了会画一个比实际笔画小几倍的光标）。
             var position = e.GetPosition(SourcePreviewCell);
-            var scale = GetPreviewScale();
-            var size = Math.Max(6, _viewModel.MaskBrushSize * scale);
+            var size = Math.Max(6, _viewModel.MaskBrushSize);
             var offset = size / 2.0;
 
             BrushCursor.Width = size;
