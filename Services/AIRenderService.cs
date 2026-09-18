@@ -540,6 +540,10 @@ namespace AIRenderer.Services
             var detail = ExtractApiMessage(content);
             if (IsAuthFailure(status))
                 return $"API Key 无效或已过期，请在设置里检查（接口返回：{detail}）";
+            // 上游 503 是模型级的：同一个 Key、同一时段换个模型往往是好的（实测 -vip 全挂时
+            // -sunburst 仍 200）。所以直接告诉用户能做什么，而不是只丢一个状态码。
+            if (IsUpstreamUnavailable(status))
+                return $"上游模型暂时不可用：{detail}　可切到「快速出图」，或在设置里换一个模型名再试";
             return $"接口返回 {status}：{detail}";
         }
 
@@ -565,6 +569,13 @@ namespace AIRenderer.Services
 
             return Truncate(content.Trim(), 160);
         }
+
+        /// <summary>上游模型不可用（503 / 502 / 504 / 网关错误）：换个模型通常就能继续。</summary>
+        private static bool IsUpstreamUnavailable(string status)
+            => !string.IsNullOrEmpty(status) &&
+               (status.Contains("ServiceUnavailable") || status.Contains("BadGateway") ||
+                status.Contains("GatewayTimeout") || status.Contains("503") ||
+                status.Contains("502") || status.Contains("504"));
 
         private static bool IsAuthFailure(string status)
             => !string.IsNullOrEmpty(status) &&
