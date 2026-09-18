@@ -123,5 +123,6 @@ net48 输出：
   `/v1/images/generations` when the host is `api.apiyi.com`, `vip.apiyi.com`, or
   `b.apiyi.com`; fast mode omits `size`, standard mode sends the selected size.
 - Multi-image reference is implemented for single-image generation. The source image is always `image 1` / `图1`; active references are copied to `%APPDATA%\AIRenderer\active-references\` and sent as `image 2..N`.
-- Reference-library items and active references are intentionally separate. Do not bind active references directly to library files without copying; deleting a library item must not break the current request.
+- Active references are copied into `%APPDATA%\AIRenderer\active-references\` (deleting the source file must not break an in-flight request) and persisted in settings.json across sessions. Thumbnails must bind the cached `Thumbnail` property (320px decode), never `FilePath` — a path binding makes WPF decode the full image per thumbnail.
+- Mask debug PNGs are off by default; set `TUOJIE_MASK_DEBUG=1` to write them to `logs\mask_debug\` when diagnosing mask problems. The transparent-pixel-percentage log line is always on.
 - Mask edit currently remains source+mask only. Additional reference images for mask edit are out of current scope.

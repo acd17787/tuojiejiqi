@@ -75,25 +75,11 @@ namespace AIRenderer.ViewModels
                     .Where(i => i != null && !string.IsNullOrEmpty(i.FilePath) && File.Exists(i.FilePath)));
 
             // 增删参考图后立即落盘，界面不用再记着调用
-            Settings.ActiveReferenceImages.CollectionChanged += (s2, e2) =>
-            {
-                try
-                {
-                    SettingsService.SaveReferenceImages(Settings.ActiveReferenceImages.ToList());
-                }
-                catch (Exception ex)
-                {
-                    LogService.Error("Failed to persist reference images", ex);
-                }
-            };
+            Settings.ActiveReferenceImages.CollectionChanged += OnActiveReferenceImagesChanged;
             GenerationHistory = new ObservableCollection<GenerationHistoryItem>(HistoryService.LoadGenerationHistory());
 
             // 计数与空状态都从这里派生：增删记录的地方不用各自记得发通知
-            GenerationHistory.CollectionChanged += (s2, e2) =>
-            {
-                OnPropertyChanged(nameof(HistoryCountText));
-                OnPropertyChanged(nameof(HistoryEmptyVisibility));
-            };
+            GenerationHistory.CollectionChanged += OnGenerationHistoryChanged;
 
             _pendingFastModel = Settings.FastModel;
             _pendingStdModel = Settings.StdModel;
@@ -554,13 +540,16 @@ namespace AIRenderer.ViewModels
             }
         }
 
-        /// <summary>画笔大小：单位是原图像素（InkCanvas 与源图同坐标系），默认 46</summary>
+        /// <summary>
+        /// 画笔大小：预览格 DIP。墨迹画布不参与缩放（DefaultDrawingAttributes.Width
+        /// 写多少屏幕上就是多少），上限跟界面滑杆一致（AIRenderWindow 的 BrushSizeSlider）。
+        /// </summary>
         public double MaskBrushSize
         {
             get => _maskBrushSize;
             set
             {
-                var next = Math.Max(8, Math.Min(200, value));
+                var next = Math.Max(8, Math.Min(140, value));
                 if (Math.Abs(_maskBrushSize - next) < 0.001) return;
                 _maskBrushSize = next;
                 OnPropertyChanged();
@@ -593,7 +582,7 @@ namespace AIRenderer.ViewModels
 
         public ObservableCollection<string> Toasts { get; } = new ObservableCollection<string>();
 
-        /// <summary>界面每次布局变化后由 code-behind 调用，用来同步画布尺寸相关状态</summary>
+        /// <summary>换原图时触发（ApplySource）；界面用它清空 InkCanvas 上的旧笔画</summary>
         public event EventHandler SourceLayoutChanged;
 
         /// <summary>VM 侧决定丢弃蒙版时通知界面清空 InkCanvas 笔画</summary>
@@ -765,11 +754,12 @@ namespace AIRenderer.ViewModels
                 FileName = $"TuoJie-Render-{DateTime.Now:yyyyMMdd_HHmmss}"
             };
 
-            if (dialog.ShowDialog() != true)
-                return;
-
             try
             {
+                // ShowDialog 也在 try 里：它的 COM 异常如果不接，就是 WPF 未处理异常（进程终止）
+                if (dialog.ShowDialog() != true)
+                    return;
+
                 using (var bitmap = ScreenCapture.BitmapSourceToBitmap(ResultImage))
                 {
                     var format = Path.GetExtension(dialog.FileName).ToLowerInvariant() == ".jpg"
@@ -1202,8 +1192,37 @@ namespace AIRenderer.ViewModels
 
         public void SetMaskBitmapProvider(Func<Bitmap> provider) => _maskBitmapProvider = provider;
 
-        /// <summary>窗口关闭时释放：内部 HttpClient 持有 sidecar handler，不释放会累积引用计数</summary>
-        public void Dispose() => _apiService?.Dispose();
+        /// <summary>窗口关闭时释放：停掉两个 DispatcherTimer、解绑事件订阅，
+        /// 最后释放内部 HttpClient（它持有 sidecar handler，不释放会累积引用计数）。
+        /// DispatcherTimer 被 Dispatcher 持有、Tick 闭包又捕获了 VM，不停的话
+        /// 关窗后 VM 会被多留一会儿（toast 2.4 秒 / 生成结束）。</summary>
+        public void Dispose()
+        {
+            _toastTimer?.Stop();
+            _progressTimer?.Stop();
+            Settings.PropertyChanged -= OnSettingsPropertyChanged;
+            Settings.ActiveReferenceImages.CollectionChanged -= OnActiveReferenceImagesChanged;
+            GenerationHistory.CollectionChanged -= OnGenerationHistoryChanged;
+            _apiService?.Dispose();
+        }
+
+        private void OnActiveReferenceImagesChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        {
+            try
+            {
+                SettingsService.SaveReferenceImages(Settings.ActiveReferenceImages.ToList());
+            }
+            catch (Exception ex)
+            {
+                LogService.Error("Failed to persist reference images", ex);
+            }
+        }
+
+        private void OnGenerationHistoryChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        {
+            OnPropertyChanged(nameof(HistoryCountText));
+            OnPropertyChanged(nameof(HistoryEmptyVisibility));
+        }
 
         private async Task GenerateStandardAsync(string prompt)
         {
@@ -1419,10 +1438,17 @@ namespace AIRenderer.ViewModels
         private double EstimateTypicalSeconds(bool masked)
         {
             var typical = masked ? 80.0 : 35.0;
-            switch (Settings.SelectedImageSize)
+            // 档位系数只对真的带 size 参数的请求有意义：标准模式、以及蒙版修改
+            //（蒙版固定 ignoreFastMode，size 照发）。快速出图不带 size，输出尺寸由
+            // 提示词决定——上一张在标准模式选的 4K 不该把快速出图的标定时间放大 1.9 倍，
+            // 否则进度条会慢慢爬。
+            if (masked || !Settings.IsFastMode)
             {
-                case "2K": typical *= 1.35; break;
-                case "4K": typical *= 1.9; break;
+                switch (Settings.SelectedImageSize)
+                {
+                    case "2K": typical *= 1.35; break;
+                    case "4K": typical *= 1.9; break;
+                }
             }
             return typical;
         }

@@ -98,7 +98,9 @@ namespace AIRenderer.Views
             if (e.Key != Key.Escape)
                 return;
 
-            // Esc 优先关大图预览，其次才是浮层
+            // Esc 优先关大图预览，其次才是浮层。
+            // 只有真的关掉了东西才把事件标记为已处理——无条件吞掉的话，
+            // 将来窗口里任何想响应 Esc 的控件都会静默失效。
             if (LightboxOverlay.Visibility == Visibility.Visible)
             {
                 CloseLightbox();
@@ -106,8 +108,11 @@ namespace AIRenderer.Views
                 return;
             }
 
-            _viewModel.CloseFloatPanels();
-            e.Handled = true;
+            if (_viewModel.IsHistoryPanelOpen || _viewModel.IsSettingsPanelOpen)
+            {
+                _viewModel.CloseFloatPanels();
+                e.Handled = true;
+            }
         }
 
         private void FloatPanel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -283,11 +288,12 @@ namespace AIRenderer.Views
                 FileName = $"{_lightboxDownloadName}-{DateTime.Now:yyyyMMdd_HHmmss}"
             };
 
-            if (dialog.ShowDialog() != true)
-                return;
-
             try
             {
+                // ShowDialog 也在 try 里：它的 COM 异常如果不接，就是 WPF 未处理异常（进程终止）
+                if (dialog.ShowDialog() != true)
+                    return;
+
                 var encoder = new PngBitmapEncoder();
                 encoder.Frames.Add(BitmapFrame.Create(_lightboxImage));
                 using (var stream = File.Create(dialog.FileName))
@@ -407,9 +413,8 @@ namespace AIRenderer.Views
                     MaskInkCanvas.DefaultDrawingAttributes.Width = _viewModel.MaskBrushSize;
                     MaskInkCanvas.DefaultDrawingAttributes.Height = _viewModel.MaskBrushSize;
                     break;
-                case "Settings":
-                    SyncPasswordBox(_viewModel.Settings.ApiKey);
-                    break;
+                // 没有 "Settings" 分支：Settings 只在 VM 构造时赋值，之后没人替换它，
+                // 这个 case 永远不会进来（PasswordBox 的初始化同步在构造函数里做）。
             }
         }
 

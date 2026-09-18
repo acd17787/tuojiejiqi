@@ -261,12 +261,16 @@ namespace AIRenderer.Services
                 }
                 catch (OperationCanceledException)
                 {
-                    // 调用方主动取消（关窗口等）：不要重启侧车
+                    // 这里无法区分「用户取消」和「HttpClient 超时」：传进来的 ct 是
+                    // HttpClient 自己的 linked token（Timeout 也挂在上面），超时同样会
+                    // 让 IsCancellationRequested 为真。所以文案必须两者都覆盖——
+                    // 之前写死 "Request cancelled"，真超时会被人当成「我取消的」，
+                    // 排查时误导。重启侧车只在内部连接超时（下面那个分支）做。
                     if (ct.IsCancellationRequested)
-                        return new SidecarResponse { Id = request.Id, StatusCode = 0, Error = "Request cancelled" };
+                        return new SidecarResponse { Id = request.Id, StatusCode = 0, Error = "请求已取消或超时" };
 
                     // 内部超时（10 秒没连上）：说明侧车卡住了。按失败处理并重启，
-                    // 否则那个卡死的侧车一直占着唯一实例，后续请求全部连不上。
+                    // 否则那个卡死的侧车一直占着连接，后续请求全部连不上。
                     lastError = "连接侧车超时";
                     if (attempt == 0)
                         RestartSidecar();

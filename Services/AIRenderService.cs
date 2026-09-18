@@ -116,9 +116,10 @@ namespace AIRenderer.Services
                 "Preserve the camera, composition, geometry, lighting, materials, and all opaque/unmasked areas as unchanged as possible. " +
                 (prompt ?? "");
 
-            try
-            {
-                SaveMaskDebugImage(maskImage);
+                try
+                {
+                    if (SaveMaskDebugImages)
+                        SaveMaskDebugImage(maskImage);
                 var transparentPercent = GetTransparentPixelPercent(maskImage);
                 LogService.Info($"Mask edit payload | source {sourceImage.Width}x{sourceImage.Height} | mask {maskImage.Width}x{maskImage.Height} | transparent {transparentPercent:F2}%");
 
@@ -436,7 +437,15 @@ namespace AIRenderer.Services
             }
         }
 
-        // ── 蒙版诊断（沿用既有行为）────────────────────────────────────────
+        // ── 蒙版诊断（默认关，见 SaveMaskDebugImages）─────────────────────
+
+        /// <summary>
+        /// 蒙版调试图开关：默认关。正式版每次蒙版生成都写一张全尺寸 PNG 到用户
+        /// AppData（限 10 张也有几十 MB），没必要。要排查蒙版问题时设环境变量
+        /// TUOJIE_MASK_DEBUG=1 再复现即可；「透明像素占比」的日志不受开关影响。
+        /// </summary>
+        private static readonly bool SaveMaskDebugImages =
+            string.Equals(Environment.GetEnvironmentVariable("TUOJIE_MASK_DEBUG"), "1", StringComparison.OrdinalIgnoreCase);
 
         private static void SaveMaskDebugImage(Bitmap maskImage)
         {
