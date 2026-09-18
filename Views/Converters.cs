@@ -108,9 +108,11 @@ namespace AIRenderer.Views
     }
 
     /// <summary>
-    /// 四张卡片的行 / 列 / 跨列 / 外边距（ConverterParameter 形如 "result.margin"）：
+    /// 内容网格里各块的行 / 列 / 跨列 / 外边距（ConverterParameter 形如 "result.margin"）：
     ///   宽窗（>1120）：原始图像(0,0) 生成结果(0,2) / 参考图像(1,0) 模型设置(1,2)
-    ///   ≤1120px：全部落到第 0 列，纵向顺序 = 原始图像 → 生成结果 → 参考图像 → 模型设置
+    ///                   提示词(2) 提示词历史(3) 状态栏(4)
+    ///   ≤1120px：四张卡片全部落到第 0 列，纵向顺序 = 原始图像 → 生成结果 → 参考图像 → 模型设置
+    ///                   提示词(4) 提示词历史(5) 状态栏(6)
     /// 可见性之外的第二套布局逻辑就集中在这一个转换器里，XAML 里不再散落重复的触发器。
     /// </summary>
     public class CardLayoutConverter : IValueConverter
@@ -121,6 +123,16 @@ namespace AIRenderer.Views
             var parts = (parameter as string ?? "").Split('.');
             var slot = parts.Length > 0 ? parts[0] : "";
             var part = parts.Length > 1 ? parts[1] : "margin";
+
+            // 提示词 / 提示词历史 / 状态栏不参与两栏重排，但要跟着卡片整体下移。
+            // 窄窗下四张卡片占满 0~3 行（见下面的 layoutRow），这三块必须排到它们之后，
+            // 否则提示词会盖住「参考图像」、历史面板会盖住「模型设置」——两张卡片直接看不见。
+            switch (slot)
+            {
+                case "prompt": return narrow ? 4 : 2;
+                case "history": return narrow ? 5 : 3;
+                case "status": return narrow ? 6 : 4;
+            }
 
             var leftColumn = slot == "source" || slot == "reference";
             var row = SlotRow(slot);

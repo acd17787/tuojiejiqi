@@ -610,7 +610,13 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
+                    <!-- 行号全部由 CardLayoutConverter 给（见 Converters.cs）：
+                         宽窗 卡片 0/0/1/1，提示词 2，历史 3，状态栏 4；
+                         窄窗 卡片 0/1/2/3，提示词 4，历史 5，状态栏 6。
+                         这里写死 7 行 = 窄窗用满的行数，宽窗多出来的行是 Auto 空行不占高度。 -->
                     <!-- 宽窗：内容列(*) + 14px 栏距 + 内容列(*)，右列卡片落在第 3 列（索引 2）；
                          ≤1120px：两个内容列都收到 0，栏距列也归 0，四张卡片只占第 1 列 → 自动上下排列 -->
                     <Grid.ColumnDefinitions>
@@ -682,7 +688,9 @@
                                 </StackPanel>
                             </Grid>
 
-                            <!-- 预览：固定 3:2；源图与 InkCanvas 同一 Viewbox，画笔坐标 = 源图像素坐标 -->
+                            <!-- 预览：固定 3:2。显示层（Viewbox + Image，按源图像素尺寸缩放）
+                                 与墨迹输入层（InkCanvas，尺寸 = Viewbox 实际渲染尺寸）是平级兄弟：
+                                 墨迹坐标 = 预览格 DIP，换算回原图像素由 CreateMaskBitmap 负责。 -->
                             <Border x:Name="SourcePreviewBorder" Grid.Row="1" VerticalAlignment="Top"
                                     Height="{Binding ActualWidth, ElementName=SourcePreviewBorder, Converter={StaticResource PreviewHeight}}"
                                     Background="{StaticResource PreviewBgBrush}"
@@ -1192,7 +1200,8 @@
                     </Grid>
 
                     <!-- ══════ 提示词 ══════ -->
-                    <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3"
+                    <StackPanel Grid.Row="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=prompt.row}"
+                                Grid.Column="0" Grid.ColumnSpan="3"
                                 Margin="0,14,0,0">
                         <!-- 左内缩 = 卡片边框 1 + 卡片 padding 17，让标题落在卡片内容线上（x=34） -->
                         <TextBlock Text="提示词" FontSize="14" FontWeight="SemiBold" Foreground="#141A26"
@@ -1224,7 +1233,8 @@
                     </StackPanel>
 
                     <!-- ══════ 提示词历史（默认折叠）══════ -->
-                    <Border Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3"
+                    <Border Grid.Row="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=history.row}"
+                            Grid.Column="0" Grid.ColumnSpan="3"
                             Margin="0,14,0,0" Background="White"
                             BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="16">
                         <StackPanel>
@@ -1306,7 +1316,8 @@
                         </StackPanel>
                     </Border>
                     <!-- ══════ 状态条：StatusMessage 之前只被赋值、从没显示过 ══════ -->
-                    <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="3"
+                    <StackPanel Grid.Row="{Binding IsNarrow, Converter={StaticResource CardLayout}, ConverterParameter=status.row}"
+                                Grid.Column="0" Grid.ColumnSpan="3"
                                 Orientation="Horizontal" Margin="2,12,0,4">
                         <Ellipse Width="7" Height="7" Fill="#22C08A" VerticalAlignment="Center"/>
                         <TextBlock Text="{Binding StatusMessage}" FontSize="12"
