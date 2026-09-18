@@ -28,6 +28,17 @@ if 'narrow || leftColumn ? 0 : 2' not in rules:
 if n_cols < 3:
     fail.append(f'需要 3 列（内容/栏距/内容），实际 {n_cols}')
 
+# 窄窗下三列都是 Star，卡片必须跨满 3 列才是整宽。
+# 曾经 span=2，卡片只占 2/3 宽、右侧一大片空白，而当时的断言只查「列索引=0」，
+# 查不出宽度问题——所以这里补上。
+span_rule = ' '.join(re.search(r'case "span":(.*?)default:', cs, re.S).group(1).split())
+print('converter span 规则:', span_rule)
+if 'narrow ? 3 : 1' not in span_rule:
+    fail.append('窄窗 span 不是 3：三列都是 Star，span=2 会让卡片只占 2/3 宽')
+missing_span = [s for s in used if f'ConverterParameter={s}.span' not in xaml]
+if missing_span:
+    fail.append(f'这些卡片没绑定 ColumnSpan，窄窗下不会跨满整行: {missing_span}')
+
 # 行号与上边距必须共用同一个「布局行」layoutRow。
 # 宽窗下 result 的 SlotRow 是 1，但实际落在第 0 行；上边距若还按 SlotRow 判断，
 # 右列卡片会整体比左列低 14px，两栏顶部对不齐。
@@ -93,5 +104,5 @@ if fail:
     for f in fail:
         print('  -', f)
     raise SystemExit(1)
-print('PASS: 宽窗 4 张卡片落在 0/2 列，窄窗全部收敛到第 0 列；'
+print('PASS: 宽窗 4 张卡片落在 0/2 列，窄窗全部收敛到第 0 列并跨满 3 列；'
       '行号与上边距共用 layoutRow；蒙版输入层在显示层之上')
