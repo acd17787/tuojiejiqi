@@ -115,7 +115,9 @@ namespace AIRenderer.ViewModels
             UseResultAsSourceCommand = new RelayCommand(UseResultAsSource, () => HasResultImage);
 
             // 蒙版（唯一入口是「涂抹修改」）
-            ToggleMaskEditCommand = new RelayCommand(ToggleMaskEdit, () => CanUseMaskEdit || IsMaskEditing);
+            // 刻意不用 CanUseMaskEdit 作为可执行条件：快速出图时按钮会被禁用、点击落不到
+            // EnterMaskEdit 里那句「请切换到标准模式」的提醒，用户只会看到一个点不动的灰按钮。
+            ToggleMaskEditCommand = new RelayCommand(ToggleMaskEdit, () => HasSourceImage || IsMaskEditing);
             EnterMaskEditCommand = new RelayCommand(EnterMaskEdit, () => CanUseMaskEdit);
             FinishMaskEditCommand = new RelayCommand(FinishMaskEditState, () => IsMaskEditing);
             CancelMaskEditCommand = new RelayCommand(CancelMaskEdit, () => IsMaskEditing);

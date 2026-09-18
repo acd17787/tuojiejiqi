@@ -621,7 +621,8 @@
                                             <TextBlock Text="上传图像" Margin="6,0,0,0" VerticalAlignment="Center"/>
                                         </StackPanel>
                                     </Button>
-                                    <!-- 涂抹修改：蒙版编辑的唯一入口，快速出图下置灰 -->
+                                    <!-- 涂抹修改：蒙版编辑的唯一入口。快速出图下保持可点，
+                                         点了由 VM 提示「请切换到标准模式」，比置灰更有指引性 -->
                                     <Button Command="{Binding ToggleMaskEditCommand}"
                                             ToolTip="{Binding MaskEditEntryToolTip}">
                                         <Button.Style>
@@ -651,7 +652,9 @@
                                     BorderBrush="{StaticResource CardLineBrush}" BorderThickness="1"
                                     CornerRadius="14" ClipToBounds="True">
                                 <Grid x:Name="SourcePreviewCell">
-                                    <Rectangle Fill="{StaticResource CanvasGridBrush}"/>
+                                    <!-- 画布格子只在没有图的时候当底纹：有图时留白，别在图片四周露出来 -->
+                                    <Rectangle Fill="{StaticResource CanvasGridBrush}"
+                                               Visibility="{Binding HasSourceImage, Converter={StaticResource InvBoolToVis}}"/>
                                     <!-- 只负责显示：内容宽高 = 源图像素尺寸，等比缩放到 3:2 预览区里 -->
                                     <Viewbox x:Name="SourceViewbox" Stretch="Uniform" Panel.ZIndex="0"
                                              Visibility="{Binding HasSourceImage, Converter={StaticResource BoolToVis}}">
@@ -882,7 +885,8 @@
                                     BorderBrush="{StaticResource CardLineBrush}" BorderThickness="1"
                                     CornerRadius="14" ClipToBounds="True">
                                 <Grid>
-                                    <Rectangle Fill="{StaticResource CanvasGridBrush}"/>
+                                    <Rectangle Fill="{StaticResource CanvasGridBrush}"
+                                               Visibility="{Binding HasResultImage, Converter={StaticResource InvBoolToVis}}"/>
                                     <!-- 空状态 -->
                                     <Border Visibility="{Binding ResultEmptyVisibility}"
                                             BorderBrush="{StaticResource EmptyDashBrush}" BorderThickness="1"
