@@ -293,14 +293,19 @@ namespace TuoJieSidecar
         /// API易 文档（docs.apiyi.com/faq/base-url-config）列出四个节点并明确建议
         /// 「在代码中配置备用节点，实现自动切换，提高服务可用性」。
         ///
-        ///   api.apiyi.com     国内默认
-        ///   vip.apiyi.com     全球直连（文档标注为非大陆首选，可从大陆访问）
-        ///   b.apiyi.com       备用节点（「主力节点异常时可切换」）
+        ///   api.apiyi.com     国内默认（本插件默认 BaseUrl）
+        ///   b.apiyi.com       备用节点（文档：「主力节点异常时可切换」）← 重试目标
+        ///   vip.apiyi.com     全球直连（文档标注为非大陆首选）
         ///   api-cf.apiyi.com  Cloudflare CDN（有 100 秒超时限制，不适合生图）
         ///
         /// 只在传输层失败（unexpected EOF / SSL 建连失败）时触发，见 IsTransientTransportError；
         /// HTTP 状态码错误不重试。换节点不影响协议判定——IsApiYiHost 同时认这三个域名，
         /// 换过去仍走 /v1/images/generations。
+        ///
+        /// 备用节点选 b 而不是 vip：文档把 b 标为主力的备用，vip 是给非大陆的直连线路。
+        /// 2026-09-18 实测（GET /v1/models + 无效模型名 POST，均不产生费用）：
+        /// 三个节点用同一把 Key 都返回 200 / 同一句「该令牌无权使用模型」错误（同一套网关）；
+        /// 延迟 api 0.56-0.60s ≈ b 0.57-0.59s < vip 0.65-0.69s。
         /// </summary>
         private static string GetRetryUrl(string url, int attempt)
         {
@@ -312,7 +317,7 @@ namespace TuoJieSidecar
                 var uri = new Uri(url);
                 if (uri.Host.Equals("api.apiyi.com", StringComparison.OrdinalIgnoreCase))
                 {
-                    var builder = new UriBuilder(uri) { Host = "vip.apiyi.com" };
+                    var builder = new UriBuilder(uri) { Host = "b.apiyi.com" };
                     return builder.Uri.ToString();
                 }
             }
