@@ -94,61 +94,6 @@ namespace AIRenderer.Services
             }
         }
 
-        /// <summary>批量/一致性链路：沿用之前的协议，把先前结果作为参考图一起发送</summary>
-        public async Task<Bitmap> GenerateChainedAsync(
-            ProviderItem provider,
-            string apiKey,
-            string prompt,
-            Bitmap currentView,
-            List<Bitmap> previousResults,
-            RenderSettings settings,
-            Bitmap referenceImage = null)
-        {
-            LastError = null;
-            if (!ValidateRequest(apiKey, currentView, requireSource: true))
-                return null;
-
-            var references = new List<Bitmap>();
-            if (previousResults != null)
-                references.AddRange(previousResults.Where(r => r != null));
-            if (referenceImage != null)
-                references.Add(referenceImage);
-
-            var baseUrl = ResolveBaseUrl(provider, settings);
-            var body = BuildPrompt(prompt, settings, references.Count) +
-                       "\n\nKeep the camera position, FOV and the geometry of the scene identical to the previous image. " +
-                       "Only change lighting, materials and atmosphere.";
-
-            try
-            {
-                using (var requestImage = PrepareSourceImage(currentView, settings))
-                {
-                    var size = ResolveSize(settings);
-                    if (ProviderItem.IsApiYiHost(baseUrl))
-                        return await PostGenerationsAsync(baseUrl, apiKey, body, requestImage, references, settings, size);
-
-                    // edits 接口是 multipart，必须有图；纯文生图只支持 API易 那条 JSON 链路
-                    if (requestImage == null)
-                    {
-                        LastError = "当前中转站不支持纯文生图，请先导入原图或上传图片";
-                        return null;
-                    }
-
-                    return await PostEditsAsync(baseUrl, apiKey, body, requestImage, references, settings, size, null);
-                }
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                LogService.Error("GenerateChainedAsync failed", ex);
-                return null;
-            }
-            finally
-            {
-                DisposeAll(references);
-            }
-        }
-
         /// <summary>蒙版修改：始终 /v1/images/edits + mask，模型为支持精确蒙版的官方模型</summary>
         public async Task<Bitmap> GenerateMaskedEditAsync(
             ProviderItem provider,

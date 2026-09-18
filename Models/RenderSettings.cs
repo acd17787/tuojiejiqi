@@ -124,7 +124,6 @@ namespace AIRenderer.Models
                 OnPropertyChanged(nameof(SelectedModel));
                 OnPropertyChanged(nameof(IsMaskEditable));
                 OnPropertyChanged(nameof(IsRatioEnabled));
-                OnPropertyChanged(nameof(IsImageSizeEnabled));
                 OnPropertyChanged(nameof(SizeSummary));
                 RefreshDerived();
             }
@@ -139,7 +138,6 @@ namespace AIRenderer.Models
         /// <summary>快速出图不支持涂抹/蒙版</summary>
         public bool IsMaskEditable => IsStandardMode;
         public bool IsRatioEnabled => IsStandardMode;
-        public bool IsImageSizeEnabled => IsStandardMode;
 
         // ── 蒙版状态（由 ViewModel 同步，用于 SelectedModel 与界面状态）──
 

@@ -21,7 +21,6 @@ namespace AIRenderer.Models
         public string DefaultModel { get; set; }
         /// <summary>openai = 通用 OpenAI Images；images_generations = API易兼容 Generations</summary>
         public string ApiFormat { get; set; } = "openai";
-        public ApiProvider? BuiltInProvider { get; set; }
 
         public static ProviderItem FromBuiltIn(ApiProviderConfig config)
         {
@@ -34,8 +33,7 @@ namespace AIRenderer.Models
                 BaseUrl = NormalizeBaseUrl(config.BaseUrl),
                 Models = config.Models ?? new List<string>(),
                 DefaultModel = config.DefaultModel,
-                ApiFormat = config.ApiFormat,
-                BuiltInProvider = config.Provider
+                ApiFormat = config.ApiFormat
             };
         }
 
