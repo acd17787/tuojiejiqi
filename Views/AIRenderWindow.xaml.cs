@@ -544,6 +544,9 @@ namespace AIRenderer.Views
             using (var transparent = new DrawingSolidBrush(DrawingColor.FromArgb(0, 255, 255, 255)))
             {
                 graphics.Clear(DrawingColor.White);
+                // 必须 SourceCopy：默认的 SourceOver 下，用 alpha=0 的画刷绘制等于「源覆盖目标」，
+                // 结果仍是原来的不透明像素 → 涂抹处打不出透明洞，蒙版会变成全白（= 没有任何区域需要重绘）。
+                graphics.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
                 graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
                 foreach (var stroke in MaskInkCanvas.Strokes)

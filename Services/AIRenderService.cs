@@ -160,7 +160,14 @@ namespace AIRenderer.Services
             try
             {
                 SaveMaskDebugImage(maskImage);
-                LogService.Info($"Mask edit payload | source {sourceImage.Width}x{sourceImage.Height} | mask {maskImage.Width}x{maskImage.Height} | transparent {GetTransparentPixelPercent(maskImage):F2}%");
+                var transparentPercent = GetTransparentPixelPercent(maskImage);
+                LogService.Info($"Mask edit payload | source {sourceImage.Width}x{sourceImage.Height} | mask {maskImage.Width}x{maskImage.Height} | transparent {transparentPercent:F2}%");
+
+                // 蒙版全靠「透明 = 需要重绘」表达。若一个透明像素都没有，这次请求等于整图重绘，
+                // 用户会看到「涂的地方没变、别的地方变了」。这里明确警告，别再静默跑成整图重绘。
+                if (transparentPercent <= 0)
+                    LogService.Warn("Mask has no transparent pixel: it degenerates to a full-image edit. "
+                                    + "Check the mask rasterizer (GDI+ needs CompositingMode.SourceCopy for alpha-0 strokes).");
 
                 var size = ResolveSize(settings, ignoreFastMode: true);
                 // 蒙版链路固定使用支持精确 inpainting 的官方模型，不受当前模式影响
