@@ -54,6 +54,8 @@ namespace AIRenderer.ViewModels
         private string _pendingStdModel;
         private readonly DispatcherTimer _toastTimer;
         private readonly DispatcherTimer _progressTimer;
+        private readonly Stopwatch _progressWatch = new Stopwatch();
+        private double _progressTypicalSeconds = 35;
 
         public AIRenderViewModel() : this(SettingsService.LoadRenderSettings())
         {
@@ -90,7 +92,8 @@ namespace AIRenderer.ViewModels
                     _toastTimer.Start();
             };
 
-            // 生成进度：真实进度只能等接口返回，这里给一个爬到 90% 的观感进度（完成时直接 100%）
+            // 生成进度：接口不报进度，只能给一条观感曲线。用渐近函数而不是线性封顶——
+            // 线性封顶会在典型耗时之前就撞到上限然后一动不动，看着像卡死。
             _progressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(320) };
             _progressTimer.Tick += (s, e) =>
             {
@@ -100,7 +103,7 @@ namespace AIRenderer.ViewModels
                     return;
                 }
 
-                GenerationProgress = Math.Min(90, GenerationProgress + 4);
+                GenerationProgress = ProgressAt(_progressWatch.Elapsed.TotalSeconds, _progressTypicalSeconds);
                 GenerationProgressText = $"正在生成… {GenerationProgress:0}%";
             };
 
@@ -1189,7 +1192,7 @@ namespace AIRenderer.ViewModels
             try
             {
                 IsGenerating = true;
-                StartGenerationProgress();
+                StartGenerationProgress(false);
                 GenerationDetailText = BuildGenerationDetail();
                 ResultImage = null;
                 StatusMessage = "正在生成…";
@@ -1259,7 +1262,7 @@ namespace AIRenderer.ViewModels
                     }
 
                     IsGenerating = true;
-                    StartGenerationProgress();
+                    StartGenerationProgress(true);
                     GenerationDetailText = BuildGenerationDetail();
                     ResultImage = null;
                     StatusMessage = "正在发送蒙版修改请求…";
@@ -1326,8 +1329,10 @@ namespace AIRenderer.ViewModels
             }
         }
 
-        private void StartGenerationProgress()
+        private void StartGenerationProgress(bool masked)
         {
+            _progressTypicalSeconds = EstimateTypicalSeconds(masked);
+            _progressWatch.Restart();
             GenerationProgress = 0;
             GenerationProgressText = "正在生成… 0%";
             _progressTimer.Stop();
@@ -1337,7 +1342,42 @@ namespace AIRenderer.ViewModels
         private void StopGenerationProgress()
         {
             _progressTimer.Stop();
-            GenerationProgressText = "正在生成… 90%";
+            _progressWatch.Stop();
+            // 文字跟着进度条的真实值走。原来这里把文字写死成「90%」，而进度值还停在半路
+            // （例如 3 秒返回时是 36%），两者对不上；接口一返回紧接着就是 100%，也不需要这个假中间值。
+            GenerationProgressText = $"正在生成… {GenerationProgress:0}%";
+        }
+
+        /// <summary>
+        /// 观感进度曲线：98 × (1 − e^(−t/τ))，τ 取典型耗时的一半，于是
+        /// 在典型耗时那一刻约到 85%，之后越靠近 98 越慢但一直在动 —— 超时也不会看起来卡死。
+        /// 纯函数，便于单独验算。
+        /// </summary>
+        internal static double ProgressAt(double elapsedSeconds, double typicalSeconds)
+        {
+            if (elapsedSeconds <= 0)
+                return 0;
+
+            var tau = Math.Max(1.0, typicalSeconds / 2.0);
+            return 98.0 * (1.0 - Math.Exp(-elapsedSeconds / tau));
+        }
+
+        /// <summary>
+        /// 典型耗时（秒）用于定标曲线。取值同时对照两个来源：
+        ///   · 本机真实请求日志：生成 31.6 / 32.0 / 75.0 秒，蒙版 73.9 / 80.7 秒；
+        ///   · API易 文档：gpt-image-2.5-all 约 90 秒，-vip 1024² 实测 37–120 秒，
+        ///     high + 2K/4K 实测 3–5 分钟。
+        /// 文档给的是偏保守的量级，这里以实测为准，2K/4K 按档位放大。
+        /// </summary>
+        private double EstimateTypicalSeconds(bool masked)
+        {
+            var typical = masked ? 80.0 : 35.0;
+            switch (Settings.SelectedImageSize)
+            {
+                case "2K": typical *= 1.35; break;
+                case "4K": typical *= 1.9; break;
+            }
+            return typical;
         }
 
         private void SetResult(Bitmap bitmap)
