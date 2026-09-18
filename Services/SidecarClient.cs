@@ -35,99 +35,108 @@ namespace AIRenderer.Services
         public SidecarHttpMessageHandler()
         {
             _pipeName = $"TuoJieSidecar-{Process.GetCurrentProcess().Id}";
-            EnsureSidecarRunning();
-        }
-
-        private void EnsureSidecarRunning()
-        {
             lock (s_lock)
             {
-                if (s_process != null && !s_process.HasExited)
+                // 计数语义：构造 +1、Dispose -1，一一对应。起进程的路径（首次 / 进程已死 /
+                // 重启）都不再碰计数。
+                // 原来用 s_refCount = Math.Max(1, s_refCount) 兜底：进程自行退出后新建的
+                // handler 不会被计入，别的 handler 释放时会把计数打到 0，把新进程杀掉。
+                s_refCount++;
+                try
                 {
-                    s_refCount++;
-                    return;
+                    if (s_process == null || s_process.HasExited)
+                        StartSidecarLocked();
+                }
+                catch
+                {
+                    s_refCount--;   // 起不来就别占着计数
+                    throw;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 启动侧车进程。只负责起进程，不碰引用计数（计数由构造 / Dispose 管）。
+        /// 调用方必须已持有 s_lock。
+        /// </summary>
+        private void StartSidecarLocked()
+        {
+            var pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            LogSidecar($"Plugin directory: {pluginDir}");
+
+            // Try net7.0 Sidecar first, then net48 fallback
+            string[] candidates = s_net48FallbackActive
+                ? new[] { Path.Combine(pluginDir ?? ".", "net48-sidecar", "TuoJieSidecar.exe") }
+                : new[] {
+                    Path.Combine(pluginDir ?? ".", "TuoJieSidecar.exe"),
+                    Path.Combine(pluginDir ?? ".", "net48-sidecar", "TuoJieSidecar.exe"),
+                    Path.Combine(pluginDir ?? ".", "TuoJieSidecar-net48.exe")
+                  };
+
+            Exception lastError = null;
+            foreach (var sidecarExe in candidates)
+            {
+                LogSidecar($"Checking Sidecar candidate: {sidecarExe}");
+                if (!File.Exists(sidecarExe))
+                {
+                    LogSidecar($"Missing Sidecar candidate: {sidecarExe}");
+                    continue;
                 }
 
-                var pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-                LogSidecar($"Plugin directory: {pluginDir}");
-
-                // Try net7.0 Sidecar first, then net48 fallback
-                string[] candidates = s_net48FallbackActive
-                    ? new[] { Path.Combine(pluginDir ?? ".", "net48-sidecar", "TuoJieSidecar.exe") }
-                    : new[] {
-                        Path.Combine(pluginDir ?? ".", "TuoJieSidecar.exe"),
-                        Path.Combine(pluginDir ?? ".", "net48-sidecar", "TuoJieSidecar.exe"),
-                        Path.Combine(pluginDir ?? ".", "TuoJieSidecar-net48.exe")
-                      };
-
-                Exception lastError = null;
-                foreach (var sidecarExe in candidates)
+                var proc = new Process
                 {
-                    LogSidecar($"Checking Sidecar candidate: {sidecarExe}");
-                    if (!File.Exists(sidecarExe))
+                    StartInfo = new ProcessStartInfo
                     {
-                        LogSidecar($"Missing Sidecar candidate: {sidecarExe}");
+                        FileName = sidecarExe,
+                        Arguments = $"\"{_pipeName}\" {Process.GetCurrentProcess().Id}",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        WindowStyle = ProcessWindowStyle.Hidden,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    },
+                    EnableRaisingEvents = true
+                };
+
+                try
+                {
+                    proc.Start();
+                    LogSidecar($"Started {Path.GetFileName(sidecarExe)} pid={proc.Id}");
+
+                    // Wait and verify it stays alive (not an immediate crash)
+                    Thread.Sleep(500);
+
+                    if (proc.HasExited)
+                    {
+                        var stderr = proc.StandardError.ReadToEnd();
+                        var exitCode = proc.ExitCode;
+                        var exeName = Path.GetFileName(sidecarExe);
+                        RhinoApp.WriteLine($"[TuoJie] {exeName} exited immediately (code {exitCode}): {stderr}");
+                        LogSidecar($"{exeName} exited immediately (code {exitCode}): {stderr}");
+                        lastError = new Exception($"Sidecar exited with code {exitCode}: {stderr}");
+                        proc.Dispose();
                         continue;
                     }
 
-                    try
-                    {
-                        var proc = new Process
-                        {
-                            StartInfo = new ProcessStartInfo
-                            {
-                                FileName = sidecarExe,
-                                Arguments = $"\"{_pipeName}\" {Process.GetCurrentProcess().Id}",
-                                UseShellExecute = false,
-                                CreateNoWindow = true,
-                                WindowStyle = ProcessWindowStyle.Hidden,
-                                RedirectStandardOutput = true,
-                                RedirectStandardError = true
-                            },
-                            EnableRaisingEvents = true
-                        };
-
-                        proc.Start();
-                        LogSidecar($"Started {Path.GetFileName(sidecarExe)} pid={proc.Id}");
-
-                        // Wait and verify it stays alive (not an immediate crash)
-                        Thread.Sleep(500);
-
-                        if (proc.HasExited)
-                        {
-                            var stderr = proc.StandardError.ReadToEnd();
-                            var exitCode = proc.ExitCode;
-                            var exeName = Path.GetFileName(sidecarExe);
-                            RhinoApp.WriteLine($"[TuoJie] {exeName} exited immediately (code {exitCode}): {stderr}");
-                            LogSidecar($"{exeName} exited immediately (code {exitCode}): {stderr}");
-                            lastError = new Exception($"Sidecar exited with code {exitCode}: {stderr}");
-                            proc.Dispose();
-                            continue;
-                        }
-
-                        s_process = proc;
-                        s_activeSidecarPath = sidecarExe;
-                        s_net48FallbackActive = sidecarExe.Contains("net48");
-                        // 保留已有引用计数：静态 DownloadClient 等其他 handler 仍在使用这个进程，
-                        // 置 1 会让它们关窗时把计数打到 0、Kill 掉别人正在用的侧车。
-                        s_refCount = Math.Max(1, s_refCount);
-
-                        if (s_net48FallbackActive)
-                            RhinoApp.WriteLine("[TuoJie] Using net48 Sidecar (fallback mode)");
-                        LogSidecar($"Sidecar active: {s_activeSidecarPath}, pid={s_process.Id}, fallback={s_net48FallbackActive}");
-
-                        return;
-                    }
-                    catch (Exception ex)
-                    {
-                        LogSidecar($"Failed to start {sidecarExe}: {ex}");
-                        lastError = ex;
-                    }
+                    s_process = proc;
+                    s_activeSidecarPath = sidecarExe;
+                    s_net48FallbackActive = sidecarExe.Contains("net48");
+                    if (s_net48FallbackActive)
+                        RhinoApp.WriteLine("[TuoJie] Using net48 Sidecar (fallback mode)");
+                    LogSidecar($"Sidecar active: {s_activeSidecarPath}, pid={proc.Id}, fallback={s_net48FallbackActive}");
+                    return;
                 }
-
-                throw new InvalidOperationException(
-                    $"Failed to start Sidecar process. Last error: {lastError?.Message ?? "Sidecar not found"}");
+                catch (Exception ex)
+                {
+                    // Start() 抛异常时进程句柄同样要释放，否则等 GC 终结器才回收
+                    proc.Dispose();
+                    LogSidecar($"Failed to start {sidecarExe}: {ex}");
+                    lastError = ex;
+                }
             }
+
+            throw new InvalidOperationException(
+                $"Failed to start Sidecar process. Last error: {lastError?.Message ?? "Sidecar not found"}");
         }
 
         private static void LogSidecar(string message)
@@ -285,19 +294,41 @@ namespace AIRenderer.Services
             };
         }
 
+        /// <summary>重启侧车：只换进程，不改引用计数——调用方自己那份计数还在。</summary>
         private void RestartSidecar()
         {
             lock (s_lock)
             {
+                KillSidecarLocked();
                 try
                 {
-                    if (s_process != null && !s_process.HasExited)
-                        s_process.Kill();
+                    StartSidecarLocked();
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    // 起不来就保持没有进程的状态，下一次请求会再试一次
+                    LogSidecar($"Restart sidecar failed: {ex.Message}");
+                }
+            }
+        }
 
+        /// <summary>杀掉并释放侧车进程。调用方必须已持有 s_lock。</summary>
+        private static void KillSidecarLocked()
+        {
+            try
+            {
+                if (s_process != null)
+                {
+                    if (!s_process.HasExited)
+                        s_process.Kill();
+                    // 原来 Kill 之后直接置 null，Process 句柄要等 GC 终结器才释放
+                    s_process.Dispose();
+                }
+            }
+            catch { }
+            finally
+            {
                 s_process = null;
-                EnsureSidecarRunning();
             }
         }
 
@@ -320,12 +351,10 @@ namespace AIRenderer.Services
                 _disposed = true;
                 lock (s_lock)
                 {
+                    // 与构造函数里的 +1 一一对应
                     s_refCount--;
-                    if (s_refCount <= 0 && s_process != null && !s_process.HasExited)
-                    {
-                        try { s_process.Kill(); } catch { }
-                        s_process = null;
-                    }
+                    if (s_refCount <= 0)
+                        KillSidecarLocked();
                 }
             }
             base.Dispose(disposing);

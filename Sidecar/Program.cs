@@ -1,4 +1,4 @@
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
@@ -61,6 +61,10 @@ namespace TuoJieSidecar
                         $"[{DateTime.Now:HH:mm:ss.fff}] Fatal: {ex}\r\n");
                 }
                 catch { }
+
+                // 原来吞掉异常后正常返回，退出码是 0，客户端把它报成
+                // 「exited immediately (code 0)」——崩溃被说成正常退出，排查时误导。
+                Environment.ExitCode = 1;
             }
         }
 
@@ -72,63 +76,80 @@ namespace TuoJieSidecar
             using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
             http.DefaultRequestHeaders.ConnectionClose = false;
 
-            // Monitor parent process — exit when parent dies
-            var parentWatcher = parentPid > 0
-                ? StartParentWatcher(parentPid)
-                : Task.CompletedTask;
+            // 父进程一退出就取消。比原来「每 5 秒超时轮询一次」干净：不再反复创建/销毁
+            // 内核管道对象，父进程死了也能立刻收摊。手工启动（没给 pid）时不取消，
+            // 一直服务到被显式结束——原来 parentPid<=0 时 IsCompleted 恒为真，服务一次就退。
+            using var shutdown = new CancellationTokenSource();
+            if (parentPid > 0)
+                _ = WatchParentAsync(parentPid, shutdown);
 
-            while (true)
+            while (!shutdown.IsCancellationRequested)
             {
-                using var server = new NamedPipeServerStream(
-                    pipeName, PipeDirection.InOut, 1,
+                var server = new NamedPipeServerStream(
+                    pipeName, PipeDirection.InOut,
+                    NamedPipeServerStream.MaxAllowedServerInstances,
                     PipeTransmissionMode.Byte,
                     PipeOptions.Asynchronous | PipeOptions.WriteThrough);
 
                 try
                 {
-                    // WaitForConnectionAsync needs a CTS so we can cancel when parent exits
-                    using var connectCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                    await server.WaitForConnectionAsync(connectCts.Token);
+                    await server.WaitForConnectionAsync(shutdown.Token);
                 }
                 catch (OperationCanceledException)
                 {
-                    if (parentWatcher.IsCompleted)
-                        break;
-                    continue;
+                    server.Dispose();
+                    break;
                 }
                 catch (IOException)
                 {
+                    server.Dispose();
                     break;
                 }
 
-                try
-                {
-                    await HandleConnectionAsync(server, http);
-                }
-                catch (Exception ex)
-                {
-                    LogError("Connection handling failed", ex);
-                }
-
-                if (server.IsConnected)
-                    server.Disconnect();
-
-                if (parentWatcher.IsCompleted)
-                    break;
+                // 连接交给独立任务处理，立刻回去 accept 下一条。
+                // 原来 maxInstances=1 且串行处理：一次生图占住连接好几分钟，第二个请求
+                // 连都连不上，客户端等 10 秒判定「侧车卡死」并 Kill 掉它——连正在服务的
+                // 那条连接一起打断。两个窗口同时生成就会踩到。
+                _ = HandleConnectionAsync(server, http);
             }
         }
 
-        private static async Task StartParentWatcher(int parentPid)
+        private static async Task WatchParentAsync(int parentPid, CancellationTokenSource shutdown)
         {
             try
             {
-                var parent = Process.GetProcessById(parentPid);
+                using var parent = Process.GetProcessById(parentPid);
                 await Task.Run(() => parent.WaitForExit());
             }
             catch { }
+
+            try { shutdown.Cancel(); } catch { }
         }
 
         private static async Task HandleConnectionAsync(NamedPipeServerStream pipe, HttpClient http)
+        {
+            try
+            {
+                await ServeRequestsAsync(pipe, http);
+            }
+            catch (Exception ex)
+            {
+                LogError("Connection handling failed", ex);
+            }
+            finally
+            {
+                try
+                {
+                    if (pipe.IsConnected)
+                        pipe.Disconnect();
+                }
+                catch { }
+
+                pipe.Dispose();
+            }
+        }
+
+        private static async Task ServeRequestsAsync(NamedPipeServerStream pipe, HttpClient http)
         {
             var lengthBuffer = new byte[4];
             while (pipe.IsConnected)
@@ -139,7 +160,12 @@ namespace TuoJieSidecar
 
                 var msgLen = BitConverter.ToInt32(lengthBuffer, 0);
                 if (msgLen <= 0 || msgLen > 50 * 1024 * 1024) // max 50 MB
+                {
+                    // 静默 break 会让客户端只看到 EndOfStreamException，分不清是
+                    // 「请求过大」还是「JSON 非法」，还会触发它重启侧车。这里留下日志。
+                    LogInfo($"Rejected request frame: length={msgLen} (limit 50MB)");
                     break;
+                }
 
                 var buffer = new byte[msgLen];
                 if (!await ReadExactAsync(pipe, buffer, msgLen))
@@ -147,7 +173,11 @@ namespace TuoJieSidecar
 
                 var json = Encoding.UTF8.GetString(buffer, 0, msgLen);
                 var request = JsonConvert.DeserializeObject<SidecarRequest>(json, JsonSettings);
-                if (request == null) break;
+                if (request == null)
+                {
+                    LogInfo("Rejected request: JSON deserialized to null");
+                    break;
+                }
 
                 var response = await ExecuteRequestAsync(http, request);
 
@@ -156,8 +186,7 @@ namespace TuoJieSidecar
                 var lengthPrefix = BitConverter.GetBytes(responseBytes.Length);
 
                 // 写入必须带超时：客户端中途放弃读取（例如它自己超时了）时，
-                // 这里会永久阻塞在 WriteAsync 上，while(true) 就再也 accept 不了新连接，
-                // 之后每次请求都在客户端 10 秒连接超时后失败——表现为「一直转」。
+                // 这里会永久阻塞在 WriteAsync 上，这条连接就再也回不来。
                 using (var writeCts = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
                 {
                     await pipe.WriteAsync(lengthPrefix, 0, 4, writeCts.Token);

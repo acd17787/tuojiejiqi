@@ -59,6 +59,108 @@ internal static class Program
     private static async Task<int> Main()
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
+
+        // 侧车并发探针自带本地 mock，不需要外部起 mock-api.ps1
+        if (Environment.GetEnvironmentVariable("CONCURRENCY_PROBE") == "1")
+            return await ConcurrencyProbe();
+
+        return await RunApiChecks();
+    }
+
+    /// <summary>
+    /// 侧车并发探针：两个请求同时发出，慢的那个拖 15 秒，断言快的不被它挡住。
+    ///
+    /// 修复前：侧车 maxInstances=1 且串行处理，快请求的连接要等慢请求做完（15 秒），
+    /// 客户端 10 秒连接超时先到，判定「侧车卡死」并把进程 Kill 掉——正在服务的慢请求
+    /// 一起被打断。表现为快请求耗时 >10 秒、慢请求失败。
+    /// 修复后：侧车允许多实例并发 accept，快请求 1 秒内返回，慢请求照常成功。
+    /// </summary>
+    private static async Task<int> ConcurrencyProbe()
+    {
+        const int port = 8917;
+        const string png = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR42mO4o6GBFTEMLQkAe3tLAYZNzu4AAAAASUVORK5CYII=";
+
+        var listener = new System.Net.HttpListener();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        Console.WriteLine($"并发探针：本地多线程 mock on {port}");
+
+        _ = Task.Run(async () =>
+        {
+            while (listener.IsListening)
+            {
+                System.Net.HttpListenerContext ctx;
+                try { ctx = await listener.GetContextAsync(); }
+                catch { break; }
+
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        string body;
+                        using (var reader = new System.IO.StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding))
+                            body = await reader.ReadToEndAsync();
+
+                        if (body.Contains("__SLOW__"))
+                            await Task.Delay(15000);
+
+                        var payload = System.Text.Encoding.UTF8.GetBytes(
+                            "{\"data\":[{\"b64_json\":\"" + png + "\"}]}");
+                        ctx.Response.ContentType = "application/json";
+                        ctx.Response.ContentLength64 = payload.Length;
+                        await ctx.Response.OutputStream.WriteAsync(payload, 0, payload.Length);
+                    }
+                    catch { }
+                    finally { try { ctx.Response.Close(); } catch { } }
+                });
+            }
+        });
+
+        var baseUrl = $"http://127.0.0.1:{port}";
+        var provider = ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi));
+        provider.BaseUrl = baseUrl;
+        provider.ApiFormat = "openai";
+        var settings = new RenderSettings
+        {
+            BaseUrl = baseUrl,
+            ApiKey = "probe-key",
+            FastModel = "gpt-image-2.5-all",
+            StdModel = "gpt-image-2.5-vip",
+            IsFastMode = false,
+            SelectedImageSize = "2K"
+        };
+        settings.SelectedAspectRatio = settings.AspectRatios.Find(r => r.Ratio == "16:9");
+        settings.SelectedProviderItem = provider;
+
+        var svc = new AIRenderService();
+        using var slowSrc = MakeImage(64, 48, false);
+        using var fastSrc = MakeImage(64, 48, false);
+
+        var slowWatch = System.Diagnostics.Stopwatch.StartNew();
+        var slowTask = svc.GenerateImageAsync(provider, "probe-key", "probe __SLOW__", slowSrc, settings);
+
+        await Task.Delay(1000);   // 让慢请求先占住侧车
+
+        var fastWatch = System.Diagnostics.Stopwatch.StartNew();
+        var fastTask = svc.GenerateImageAsync(provider, "probe-key", "probe __FAST__", fastSrc, settings);
+        using var fast = await fastTask;
+        var fastSeconds = fastWatch.Elapsed.TotalSeconds;
+
+        using var slow = await slowTask;
+        var slowSeconds = slowWatch.Elapsed.TotalSeconds;
+
+        Console.WriteLine($"  快请求 {fastSeconds:F1}s   慢请求 {slowSeconds:F1}s");
+        Check("快请求不被慢请求挡住（<5 秒）", fast != null && fastSeconds < 5.0,
+              $"{fastSeconds:F1}s err={svc.LastError}");
+        Check("慢请求同时也能成功", slow != null, svc.LastError ?? "null");
+
+        listener.Stop();
+        Console.WriteLine("\nprobe 结果：" + _pass + " 通过 / " + _fail + " 失败");
+        return _fail == 0 ? 0 : 1;
+    }
+
+    private static async Task<int> RunApiChecks()
+    {
         Console.WriteLine("mock base = " + _mock);
 
         var provider = ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi));
