@@ -1,6 +1,6 @@
 # TuoJie — Rhino AI Renderer 插件
 
-AI 图生图渲染的 Rhino 8 插件。截取视口 → 调用大模型 API → 返回渲染图。支持单图和批量命名视图。
+AI 图生图渲染的 Rhino 8 插件。截取视口 → 调用大模型 API → 返回渲染图。
 
 ## 编译
 
@@ -46,7 +46,6 @@ Models/
   ApiProvider.cs           # ProviderItem, ApiProviderConfig, CustomProviderConfig
   RenderSettings.cs        # 渲染参数 + AspectRatio / SizeOption / 历史条目等
   ImageSizeTable.cs        # API易 -vip 的 5 比例 × 3 档尺寸表 + 「原图」吸附
-  ViewRenderItem.cs        # 批量渲染单个视图项
 Services/
   AIRenderService.cs       # API 调用编排（走 SidecarHttpMessageHandler）
   SidecarClient.cs         # HttpMessageHandler：拦截所有 HTTP → 命名管道
@@ -55,15 +54,10 @@ Services/
   HistoryService.cs        # 生成历史（history/index.json）+ 提示词历史
   ImageUtil.cs             # 统一图片解码，避免 GDI+ 流生命周期问题
   LogAndAutoSave.cs        # 日志写入（AutoSaveService 已于清理时删除，历史图片统一走 HistoryService）
-  Localization.cs          # 中英文字符串表
-  LocalizationManager.cs   # WPF 本地化绑定代理
 ViewModels/
   AIRenderViewModel.cs     # 主窗口 VM（原型状态机：原图/蒙版/结果/两套历史/浮层）
-  BatchRenderViewModel.cs  # 批量渲染 VM（主界面不再有入口，保留可独立调用）
 Views/
-  AIRenderWindow.xaml      # 主窗口（原型布局，批量切换按钮已移除）
-  BatchRenderWindow.xaml   # 批量渲染子窗口（保留）
-  ReferenceLibraryDialog.xaml  # 参考图库弹窗（保留，主界面不再挂入口）
+  AIRenderWindow.xaml      # 主窗口（唯一界面）
   Converters.cs            # WPF 值转换器（响应式布局 / 3:2 预览）
   InteractiveHelper.cs     # IsActive 附加属性（按钮选中态）
 Properties/
@@ -102,12 +96,6 @@ tools/
 - WPF Application 必须在创建 Window 前显式初始化（`new Application { ShutdownMode = OnExplicitShutdown }`），否则 netcore 下闪退
 - Sidecar 编译产物通过 CopySidecar MSBuild target 自动复制到输出目录
 - 禁止在 Rhino.exe 进程内直接做 HTTPS 请求，一律走 Sidecar
-
-## 本地化
-
-- `Loc.CurrentLanguage` 控制当前语言，支持 zh/CN 和 en/US
-- `LocalizationManager` 是 WPF 资源字典绑定代理，XAML 中通过 `{Binding [KEY], Source={StaticResource L}}` 使用
-- 语言选择保存在 settings.json → `LanguageIndex`
 
 ## 分发打包
 

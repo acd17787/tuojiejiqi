@@ -24,7 +24,6 @@ namespace AIRenderer.Services
         public bool IsFastMode { get; set; } = true;
         public string AspectRatio { get; set; } = "auto";
         public string ImageSize { get; set; } = "1K";
-        public int LanguageIndex { get; set; } = 0;
         public List<PromptTemplate> PromptTemplates { get; set; } = new List<PromptTemplate>();
         public List<ReferenceImageItem> ReferenceImages { get; set; } = new List<ReferenceImageItem>();
 
@@ -49,7 +48,6 @@ namespace AIRenderer.Services
         [JsonProperty("BuiltInOverrides", NullValueHandling = NullValueHandling.Ignore)]
         public JToken LegacyBuiltInOverrides { get; set; }
 
-        [JsonProperty("SelectedProvider", NullValueHandling = NullValueHandling.Ignore)]
         public JToken LegacySelectedProvider { get; set; }
     }
 
@@ -67,7 +65,6 @@ namespace AIRenderer.Services
         public static RenderSettings LoadRenderSettings()
         {
             var settings = LoadSettingsInternal();
-            Loc.CurrentLanguage = Loc.GetLanguageFromIndex(settings.LanguageIndex);
 
             var render = new RenderSettings
             {
@@ -245,21 +242,6 @@ namespace AIRenderer.Services
             catch (Exception ex) { LogService.Error("Error saving reference images", ex); }
         }
 
-        // ── 语言 ──────────────────────────────────────────────────────────
-
-        public static int LoadLanguageIndex() => LoadSettingsInternal().LanguageIndex;
-
-        public static void SaveLanguage(int languageIndex)
-        {
-            try
-            {
-                var settings = LoadSettingsInternal();
-                settings.LanguageIndex = languageIndex;
-                Loc.CurrentLanguage = Loc.GetLanguageFromIndex(languageIndex);
-                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
-            }
-            catch (Exception ex) { LogService.Error("Error saving language", ex); }
-        }
 
         // ── 读取 + 一次性迁移 ─────────────────────────────────────────────
 
@@ -282,10 +264,7 @@ namespace AIRenderer.Services
                 LogService.Error("Error loading settings", ex);
             }
 
-            var defaults = new AppSettings();
-            var culture = System.Globalization.CultureInfo.CurrentUICulture;
-            defaults.LanguageIndex = culture.Name.StartsWith("zh") ? 0 : 1;
-            return defaults;
+            return new AppSettings();
         }
 
         /// <summary>

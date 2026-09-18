@@ -29,8 +29,6 @@ namespace AIRenderer.Services
 
         private static readonly object _lock = new object();
 
-        public static string GetHistoryFolder() => HistoryFolder;
-
         // ── 生成历史 ──────────────────────────────────────────────────────
 
         public static List<GenerationHistoryItem> LoadGenerationHistory()

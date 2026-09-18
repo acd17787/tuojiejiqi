@@ -47,7 +47,6 @@ namespace AIRenderer.Views
             _viewModel.SourceLayoutChanged += OnSourceLayoutChanged;
             _viewModel.MaskStrokesCleared += OnMaskStrokesCleared;
             _viewModel.SetMaskBitmapProvider(CreateMaskBitmap);
-            _viewModel.SetMaskStrokeCountProvider(() => MaskInkCanvas.Strokes.Count);
 
             ConfigureMaskCanvas();
             SyncPasswordBox(_viewModel.Settings.ApiKey);
@@ -71,7 +70,6 @@ namespace AIRenderer.Views
                 _viewModel.SourceLayoutChanged -= OnSourceLayoutChanged;
                 _viewModel.MaskStrokesCleared -= OnMaskStrokesCleared;
                 _viewModel.SetMaskBitmapProvider(null);
-                _viewModel.SetMaskStrokeCountProvider(null);
             };
         }
 

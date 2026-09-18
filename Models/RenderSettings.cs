@@ -46,14 +46,7 @@ namespace AIRenderer.Models
         public string BaseUrl
         {
             get => _baseUrl;
-            set { _baseUrl = value ?? ""; OnPropertyChanged(); OnPropertyChanged(nameof(ApiUrl)); }
-        }
-
-        /// <summary>兼容旧绑定名</summary>
-        public string ApiUrl
-        {
-            get => _baseUrl;
-            set => BaseUrl = value;
+            set { _baseUrl = value ?? ""; OnPropertyChanged(); }
         }
 
         public string ApiKey
@@ -168,7 +161,6 @@ namespace AIRenderer.Models
         public bool IsMaskEditable => IsStandardMode;
         public bool IsRatioEnabled => IsStandardMode;
         public bool IsImageSizeEnabled => IsStandardMode;
-        public bool IsSourceImageModeEnabled => true;
 
         // ── 蒙版状态（由 ViewModel 同步，用于 SelectedModel 与界面状态）──
 
@@ -210,7 +202,6 @@ namespace AIRenderer.Models
                 _selectedAspectRatio = value ?? AspectRatios[0];
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(ResolvedRatio));
-                OnPropertyChanged(nameof(RatioSummary));
                 OnPropertyChanged(nameof(SizeSummary));
                 RefreshDerived();
             }
@@ -227,7 +218,6 @@ namespace AIRenderer.Models
         public string AutoRatioHint =>
             SelectedAspectRatio?.Ratio == ImageSizeTable.RatioAuto ? "按原图 " + ResolvedRatio : "";
 
-        public string RatioSummary => AutoRatioHint;
 
         /// <summary>「原图」按钮的悬停说明</summary>
         public string AutoRatioTooltip => "按原图长宽比自动匹配 → " + ResolvedRatio;
@@ -293,7 +283,6 @@ namespace AIRenderer.Models
 
             OnPropertyChanged(nameof(ResolvedRatio));
             OnPropertyChanged(nameof(AutoRatioHint));
-            OnPropertyChanged(nameof(RatioSummary));
             OnPropertyChanged(nameof(AutoRatioTooltip));
             OnPropertyChanged(nameof(SizeSummary));
             OnPropertyChanged(nameof(SourceAspect));
@@ -301,7 +290,6 @@ namespace AIRenderer.Models
 
         // ── 服务商（兼容批量窗口的绑定）────────────────────────────────────
 
-        public ApiProvider SelectedProvider { get; set; } = ApiProvider.ApiYi;
 
         public ProviderItem SelectedProviderItem
         {
@@ -310,11 +298,9 @@ namespace AIRenderer.Models
             {
                 _selectedProviderItem = value ?? ProviderItem.FromBuiltIn(ApiProviderConfig.GetConfig(ApiProvider.ApiYi));
                 OnPropertyChanged();
-                OnPropertyChanged(nameof(SelectedProviderDisplayName));
             }
         }
 
-        public string SelectedProviderDisplayName => "API易";
 
         /// <summary>兼容旧绑定：模型清单</summary>
         public List<ModelItem> ModelList { get; } = new List<ModelItem>

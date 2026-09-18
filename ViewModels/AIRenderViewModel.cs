@@ -22,7 +22,6 @@ namespace AIRenderer.ViewModels
     /// <summary>
     /// 主窗口 ViewModel：一一对应 prototype/tuojie-ai-renderer.html 的状态机
     /// （原图 / 蒙版 / 生成结果 / 参考图 / 模式与尺寸 / 提示词 / 两套历史 / 浮层互斥）。
-    /// 批量窗口 <see cref="BatchRenderViewModel"/> 不再由本界面调用，但保持可编译可调用。
     /// </summary>
     public class AIRenderViewModel : INotifyPropertyChanged
     {
@@ -37,8 +36,6 @@ namespace AIRenderer.ViewModels
 
         private BitmapSource _sourceImage;
         private BitmapSource _resultImage;
-        private string _sourceOrigin = "none";
-        private string _sourceLabel = "";
         private string _statusMessage = "";
         private bool _isGenerating;
         private double _generationProgress;
@@ -55,7 +52,6 @@ namespace AIRenderer.ViewModels
         private bool _isSettingsPanelOpen;
         private string _pendingFastModel;
         private string _pendingStdModel;
-        private BatchRenderViewModel _batchVM;
         private readonly DispatcherTimer _toastTimer;
         private readonly DispatcherTimer _progressTimer;
 
@@ -111,9 +107,7 @@ namespace AIRenderer.ViewModels
             UploadImageCommand = new RelayCommand(UploadLocalImage, () => !IsGenerating);
             AddReferenceImagesCommand = new RelayCommand(AddReferenceImages, () => CanAddReference);
             RemoveActiveReferenceCommand = new RelayCommand<ReferenceImageItem>(RemoveActiveReference, item => !IsGenerating && item != null);
-            ClearActiveReferencesCommand = new RelayCommand(ClearActiveReferences, () => !IsGenerating && ActiveReferenceCount > 0);
             GenerateCommand = new RelayCommand(Generate, () => CanGenerate);
-            ResetSessionCommand = new RelayCommand(ResetSession, () => !IsGenerating);
             SaveResultCommand = new RelayCommand(SaveResult, () => HasResultImage);
             UseResultAsSourceCommand = new RelayCommand(UseResultAsSource, () => HasResultImage);
 
@@ -169,7 +163,6 @@ namespace AIRenderer.ViewModels
                 _sourceImage = value;
                 HasSourceImage = value != null;
                 OnPropertyChanged();
-                OnPropertyChanged(nameof(SourcePreviewVisibility));
                 RefreshCommandStates();
             }
         }
@@ -211,12 +204,7 @@ namespace AIRenderer.ViewModels
             }
         }
 
-        /// <summary>空状态点击原图/结果图时用作提示，界面不展示模型名</summary>
-        public Visibility SourcePreviewVisibility => HasSourceImage ? Visibility.Visible : Visibility.Collapsed;
         public Visibility ResultPreviewVisibility => HasResultImage ? Visibility.Visible : Visibility.Collapsed;
-
-        public string SourceOrigin => _sourceOrigin;
-        public string SourceLabel => _sourceLabel;
 
         public string StatusMessage
         {
@@ -263,11 +251,6 @@ namespace AIRenderer.ViewModels
             get => _generationDetailText;
             private set { _generationDetailText = value ?? ""; OnPropertyChanged(); }
         }
-
-        /// <summary>结果区空状态文案随「有没有原图」变化</summary>
-        public string ResultEmptyDescription => HasSourceImage
-            ? "填写提示词后点击「生成」开始渲染"
-            : "请先在左侧「原始图像」中导入模型或上传图片";
 
         // ── 提示词 ────────────────────────────────────────────────────────
 
@@ -586,18 +569,13 @@ namespace AIRenderer.ViewModels
 
         private void RaiseMaskStrokesCleared() => MaskStrokesCleared?.Invoke(this, EventArgs.Empty);
 
-        /// <summary>通知大图预览的开合，供 Esc 优先级判断</summary>
-        public void NotifySourceLayoutChanged() => SourceLayoutChanged?.Invoke(this, EventArgs.Empty);
-
         // ── Commands ──────────────────────────────────────────────────────
 
         public ICommand CaptureCommand { get; }
         public ICommand UploadImageCommand { get; }
         public ICommand AddReferenceImagesCommand { get; }
         public ICommand RemoveActiveReferenceCommand { get; }
-        public ICommand ClearActiveReferencesCommand { get; }
         public ICommand GenerateCommand { get; }
-        public ICommand ResetSessionCommand { get; }
         public ICommand SaveResultCommand { get; }
         public ICommand UseResultAsSourceCommand { get; }
         public ICommand ToggleMaskEditCommand { get; }
@@ -620,14 +598,6 @@ namespace AIRenderer.ViewModels
         public ICommand AddHistoryAsReferenceCommand { get; }
         public ICommand DownloadHistoryCommand { get; }
         public ICommand DeleteHistoryCommand { get; }
-
-        /// <summary>批量窗口仍可独立使用（主界面不再有批量切换按钮）</summary>
-        /// <summary>批量链路入口：主界面已移除切换按钮，保留供外部/后续调用（不要删）</summary>
-        public BatchRenderViewModel BatchVM
-        {
-            get { return _batchVM ?? (_batchVM = new BatchRenderViewModel(Settings)); }
-        }
-
 
         // ── 参考图 ────────────────────────────────────────────────────────
 
@@ -662,7 +632,7 @@ namespace AIRenderer.ViewModels
 
                 using (bitmap)
                 {
-                    ApplySource(ScreenCapture.BitmapToBitmapSource(bitmap), "import", "当前视口");
+                    ApplySource(ScreenCapture.BitmapToBitmapSource(bitmap));
                     StatusMessage = $"已导入模型 {bitmap.Width}×{bitmap.Height}";
                     Toast("已导入模型，视图已同步");
                 }
@@ -698,7 +668,7 @@ namespace AIRenderer.ViewModels
                         return;
                     }
 
-                    ApplySource(ScreenCapture.BitmapToBitmapSource(bitmap), "upload", Path.GetFileName(openDialog.FileName));
+                    ApplySource(ScreenCapture.BitmapToBitmapSource(bitmap));
                 }
 
                 StatusMessage = "已上传原图 " + Path.GetFileName(openDialog.FileName);
@@ -713,17 +683,12 @@ namespace AIRenderer.ViewModels
         }
 
         /// <summary>所有「换原图」的路径都走这里：清空结果与蒙版，并刷新比例吸附与像素读数</summary>
-        private void ApplySource(BitmapSource image, string origin, string label)
+        private void ApplySource(BitmapSource image)
         {
             if (image == null)
                 return;
 
             SourceImage = image;
-            _sourceOrigin = origin;
-            _sourceLabel = label ?? "";
-            OnPropertyChanged(nameof(SourceOrigin));
-            OnPropertyChanged(nameof(SourceLabel));
-            OnPropertyChanged(nameof(ResultEmptyDescription));
 
             ResultImage = null;
 
@@ -752,7 +717,7 @@ namespace AIRenderer.ViewModels
             if (ResultImage == null)
                 return;
 
-            ApplySource(ResultImage, "result", "生成结果");
+            ApplySource(ResultImage);
             Toast("已将生成结果放回原始图像，可继续涂抹修改");
         }
 
@@ -804,10 +769,6 @@ namespace AIRenderer.ViewModels
         {
             SourceImage = null;
             ResultImage = null;
-            _sourceOrigin = "none";
-            _sourceLabel = "";
-            OnPropertyChanged(nameof(SourceOrigin));
-            OnPropertyChanged(nameof(SourceLabel));
             ResetMaskState();
             Settings.SetSourceDimensions(0, 0);
             Settings.Prompt = "";
@@ -919,15 +880,6 @@ namespace AIRenderer.ViewModels
             TryDeleteActiveReferenceCopy(item.FilePath);
             NotifyActiveReferencesChanged();
             StatusMessage = "已删除参考图";
-        }
-
-        private void ClearActiveReferences()
-        {
-            foreach (var item in Settings.ActiveReferenceImages?.ToList() ?? Enumerable.Empty<ReferenceImageItem>())
-                TryDeleteActiveReferenceCopy(item.FilePath);
-            Settings.ActiveReferenceImages?.Clear();
-            NotifyActiveReferencesChanged();
-            StatusMessage = "已清空参考图";
         }
 
         private void NotifyActiveReferencesChanged()
@@ -1078,7 +1030,7 @@ namespace AIRenderer.ViewModels
                         return;
                     }
 
-                    ApplySource(ScreenCapture.BitmapToBitmapSource(bitmap), "history", "历史结果");
+                    ApplySource(ScreenCapture.BitmapToBitmapSource(bitmap));
                 }
 
                 CloseFloatPanels();
@@ -1220,19 +1172,6 @@ namespace AIRenderer.ViewModels
         private Func<Bitmap> _maskBitmapProvider;
 
         public void SetMaskBitmapProvider(Func<Bitmap> provider) => _maskBitmapProvider = provider;
-
-        /// <summary>code-behind 在挂载后提供「当前笔画数」，用于刷新「有没有涂过」与按钮可用性</summary>
-        public void SetMaskStrokeCountProvider(Func<int> provider)
-        {
-            _maskStrokeCountProvider = provider;
-            if (provider == null)
-                return;
-
-            HasMaskStrokes = provider() > 0;
-            RefreshMaskState();
-        }
-
-        private Func<int> _maskStrokeCountProvider;
 
         private async Task GenerateStandardAsync(string prompt)
         {
