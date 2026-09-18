@@ -599,7 +599,7 @@
                     <Style TargetType="ScrollBar" BasedOn="{StaticResource SlimScrollBar}"/>
                 </ScrollViewer.Resources>
 
-                <Grid>
+                <Grid x:Name="ContentRoot">
                     <!-- 内容区左右内边距：宽窗 16/18，≤1120px 收紧到 14（对应原型 @media 1120） -->
                     <Grid.Margin>
                         <Binding Path="IsNarrow" Converter="{StaticResource AdaptiveContentMargin}"/>
@@ -732,7 +732,7 @@
                                     </Button>
 
                                     <!-- 有原图：点击看大图。蒙版编辑时显式让出命中测试，把指针完全交给 InkCanvas -->
-                                    <Button Background="Transparent" BorderThickness="0"
+                                    <Button x:Name="SourcePreviewHitArea" Background="Transparent" BorderThickness="0"
                                             Cursor="Hand" Panel.ZIndex="2"
                                             Click="SourcePreview_Click"
                                             Visibility="{Binding HasSourceImage, Converter={StaticResource BoolToVis}}"

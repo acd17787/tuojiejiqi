@@ -1,4 +1,8 @@
-"""布局契约测试：从 Converters.cs / AIRenderWindow.xaml 解析真实规则，断言宽窄两套排版。"""
+"""布局契约测试：从 Converters.cs / AIRenderWindow.xaml 解析真实规则，断言宽窄两套排版。
+
+下面用到的 ContentRoot / SourcePreviewHitArea 两个 x:Name 是**本测试的定位锚点**，
+代码后置并不使用它们。删名字前先看这里——锚点没了本测试会直接报错。
+"""
 import re
 from pathlib import Path
 
@@ -6,8 +10,18 @@ ROOT = Path(__file__).resolve().parent.parent
 cs = (ROOT / 'Views/Converters.cs').read_text(encoding='utf-8')
 xaml = (ROOT / 'Views/AIRenderWindow.xaml').read_text(encoding='utf-8')
 
+
+def index_of(needle):
+    """定位锚点；缺失时给出可读报错，而不是裸的 ValueError。"""
+    pos = xaml.find(needle)
+    if pos < 0:
+        raise SystemExit(f'FAIL: 找不到锚点 {needle!r}——XAML 结构变了或 x:Name 被删了，'
+                         f'本测试的定位方式需要同步更新')
+    return pos
+
+
 # 只取「承载四张卡片」的那个内容网格（含 source/result 两个 CardLayout 绑定）
-root_start = xaml.index('Grid x:Name="ContentRoot"')
+root_start = index_of('Grid x:Name="ContentRoot"')
 cols = re.search(r'<Grid.ColumnDefinitions>(.*?)</Grid.ColumnDefinitions>', xaml[root_start:], re.S).group(1)
 n_cols = len(re.findall(r'<ColumnDefinition', cols))
 print(f'Root Grid 列数 = {n_cols}')
@@ -53,7 +67,7 @@ if re.search(r'Thickness\(0, row == 0', margin_rule):
     fail.append('上边距按 SlotRow 的 row 判断：宽窗 result 会拿到 14px 上边距')
 if 'Converter={StaticResource PreviewHeight}' not in xaml:
     fail.append('预览缺少 3:2 高度约束')
-if xaml.index('InkCanvas x:Name="MaskInkCanvas"') < xaml.index('Viewbox x:Name="SourceViewbox"'):
+if index_of('InkCanvas x:Name="MaskInkCanvas"') < index_of('Viewbox x:Name="SourceViewbox"'):
     fail.append('InkCanvas 声明在 Viewbox 之前，蒙版会被显示层盖住')
 if 'IsHitTestVisible="{Binding IsMaskEditing}"' not in xaml:
     fail.append('InkCanvas 没有按编辑态开关命中测试')
@@ -63,7 +77,7 @@ if 'Visibility="{Binding HasSourceImage' not in ink_block:
 
 # 蒙版输入层之上不能再有任何吃指针的全尺寸元素：
 # 灯箱按钮必须显式在编辑态关闭命中测试，并且层级要低于或等于输入层之外的显式约定
-hit = xaml.split('x:Name="SourcePreviewHitArea"')[1].split('</Button>')[0]
+hit = xaml[index_of('x:Name="SourcePreviewHitArea"'):].split('</Button>')[0]
 if 'IsHitTestVisible' not in hit or 'IsMaskEditing' not in hit:
     fail.append('透明灯箱按钮没有在蒙版编辑态关闭命中测试（会挡住 InkCanvas）')
 if 'Panel.ZIndex="2"' not in hit:
