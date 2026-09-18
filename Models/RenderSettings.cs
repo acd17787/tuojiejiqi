@@ -161,7 +161,7 @@ namespace AIRenderer.Models
 
         // ── 比例与尺寸 ────────────────────────────────────────────────────
 
-        /// <summary>「原图」+ 5 个常用档位；每个档位自带选中态与悬停提示，界面直接绑定</summary>
+        /// <summary>「原图」+ 各常用档位；每个档位自带选中态与悬停提示，界面直接绑定</summary>
         public List<AspectRatio> AspectRatios { get; } = BuildAspectRatios();
 
         private static List<AspectRatio> BuildAspectRatios()

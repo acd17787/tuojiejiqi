@@ -7,7 +7,12 @@ namespace AIRenderer.Models
     /// <summary>
     /// 出图尺寸表：照抄 APIYI 官逆 -vip 线（gpt-image-2.5-vip）文档的固定档位
     /// （docs.apiyi.com → GPT-Image-2.5-VIP → Supported sizes，10 比例 × 3 档）。
-    /// 原型只外露 5 个常用比例，其余 5 个（2:3 / 3:4 / 4:5 / 5:4 / 21:9）按产品决定不展示。
+    /// 当前外露 7 个比例：1:1 / 4:3 / 3:4 / 3:2 / 2:3 / 16:9 / 9:16；
+    /// 4:5 / 5:4 / 21:9 仍不展示。
+    ///
+    /// 3:4 与 2:3 的像素取「对应横构图档位的 90° 旋转」（与表里 9:16 = 16:9 旋转同一做法），
+    /// 因此三个硬约束自动满足，不需要另行核对：边长仍是 16 的倍数、总像素不变、
+    /// 最大边不变（≤ 3840）。
     ///
     /// 这 15 个档位同时满足官方 relay 的自定义尺寸约束：
     /// 两边都是 16 的倍数 / 比例 ≤ 3:1 / 最大边 ≤ 3840 / 总像素 0.65–8.3MP，
@@ -21,7 +26,10 @@ namespace AIRenderer.Models
         public static readonly IReadOnlyList<string> SizeKeys = new[] { "1K", "2K", "4K" };
 
         /// <summary>外露给用户的比例（不含「原图」）</summary>
-        public static readonly IReadOnlyList<string> Ratios = new[] { "1:1", "4:3", "3:2", "16:9", "9:16" };
+        public static readonly IReadOnlyList<string> Ratios = new[]
+        {
+            "1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"
+        };
 
         private static readonly Dictionary<string, Dictionary<string, (int W, int H)>> Table =
             new Dictionary<string, Dictionary<string, (int, int)>>
@@ -34,9 +42,19 @@ namespace AIRenderer.Models
                 {
                     ["1K"] = (1280, 960), ["2K"] = (2048, 1536), ["4K"] = (3312, 2480)
                 },
+                // 3:4 = 4:3 的 90° 旋转
+                ["3:4"] = new Dictionary<string, (int, int)>
+                {
+                    ["1K"] = (960, 1280), ["2K"] = (1536, 2048), ["4K"] = (2480, 3312)
+                },
                 ["3:2"] = new Dictionary<string, (int, int)>
                 {
                     ["1K"] = (1280, 848), ["2K"] = (2048, 1360), ["4K"] = (3520, 2336)
+                },
+                // 2:3 = 3:2 的 90° 旋转
+                ["2:3"] = new Dictionary<string, (int, int)>
+                {
+                    ["1K"] = (848, 1280), ["2K"] = (1360, 2048), ["4K"] = (2336, 3520)
                 },
                 ["16:9"] = new Dictionary<string, (int, int)>
                 {

@@ -325,10 +325,12 @@
 
         <Style x:Key="RatioChip" TargetType="Button">
             <Setter Property="Height" Value="30"/>
-            <Setter Property="MinWidth" Value="48"/>
+            <!-- 比例档位已有 7 个（+「原图」共 8 个），收紧 4px 宽与 1px 间距，
+                 否则窗口窄于约 1200 时最后一个档位会掉到第二行 -->
+            <Setter Property="MinWidth" Value="44"/>
             <Setter Property="Padding" Value="8,0"/>
             <Setter Property="FontSize" Value="13"/>
-            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="Margin" Value="0,0,5,0"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Tag" Value="12"/>
@@ -1097,7 +1099,7 @@
                                 <!-- 图片尺寸：标签与档位同一行，左侧固定列宽让两行标签对齐 -->
                                 <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,12,0,0">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="66"/>
+                                        <ColumnDefinition Width="60"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="图片尺寸" FontSize="12.5" Foreground="#6B7482"
@@ -1122,7 +1124,7 @@
                                 <!-- 图片比例：同样内联 -->
                                 <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,8,0,0">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="66"/>
+                                        <ColumnDefinition Width="60"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="图片比例" FontSize="12.5" Foreground="#6B7482"
