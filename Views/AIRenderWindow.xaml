@@ -1351,7 +1351,12 @@
                         <ItemsControl ItemsSource="{Binding GenerationHistory}" Margin="7,12,7,12">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
-                                    <UniformGrid Columns="2"/>
+                                    <!-- 用 WrapPanel 而不是 UniformGrid：UniformGrid 把可用高度均分给每一行，
+                                         条目少的时候（比如 3 条 = 2 行）每张卡片会被拉得很高，
+                                         图片和按钮之外留出大片空白。WrapPanel 按内容高度排，不拉伸。
+                                         ItemWidth 由抽屉宽度 368 推出来：368 − 1(左框) − 14(内边距) = 353，
+                                         两列各占 174 后留 5px 余量。 -->
+                                    <WrapPanel Orientation="Horizontal" ItemWidth="174"/>
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
