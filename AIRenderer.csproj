@@ -76,7 +76,12 @@
       <SidecarWinX64PublishDir>$(MSBuildProjectDirectory)\Sidecar\bin\$(Configuration)\net7.0-windows\win-x64\publish</SidecarWinX64PublishDir>
     </PropertyGroup>
     <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.exe" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.exe')" />
-    <Copy SourceFiles="$(SidecarWinX64PublishDir)\TuoJieSidecar.exe" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarWinX64PublishDir)\TuoJieSidecar.exe')" />
+    <!-- 必须限定 net7.0-windows：publish 出来的 TuoJieSidecar.exe 是 .NET Core apphost，
+         它启动时去找同目录的 TuoJieSidecar.dll。不加条件的话，构建 net48 时它会覆盖掉
+         第 78 行刚复制好的托管 exe（net48 的 exe 本身就是程序集，没有配套 dll），
+         结果是 net48 包里那个侧车一跑就报「application to execute does not exist」。 -->
+    <Copy SourceFiles="$(SidecarWinX64PublishDir)\TuoJieSidecar.exe" DestinationFolder="$(OutputPath)"
+          Condition="'$(TargetFramework)' == 'net7.0-windows' and Exists('$(SidecarWinX64PublishDir)\TuoJieSidecar.exe')" />
     <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.dll" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.dll')" />
     <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.pdb" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.pdb')" />
     <Copy SourceFiles="$(SidecarDir)\TuoJieSidecar.deps.json" DestinationFolder="$(OutputPath)" Condition="Exists('$(SidecarDir)\TuoJieSidecar.deps.json')" />
