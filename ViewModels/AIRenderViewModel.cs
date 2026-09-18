@@ -1206,6 +1206,8 @@ namespace AIRenderer.ViewModels
                             null,
                             references))
                         {
+                            // 面包屑：能打到这里说明响应已经从侧车完整取回，问题不在传输层
+                            LogService.Info($"API 返回 | {(resultBitmap == null ? "null" : resultBitmap.Width + "x" + resultBitmap.Height)}");
                             StopGenerationProgress();
 
                             if (resultBitmap == null)
@@ -1272,6 +1274,8 @@ namespace AIRenderer.ViewModels
                             maskBitmap,
                             Settings))
                         {
+                            // 面包屑：能打到这里说明响应已经从侧车完整取回，问题不在传输层
+                            LogService.Info($"API 返回 | {(resultBitmap == null ? "null" : resultBitmap.Width + "x" + resultBitmap.Height)}");
                             StopGenerationProgress();
 
                             if (resultBitmap == null)
@@ -1303,8 +1307,11 @@ namespace AIRenderer.ViewModels
 
         private async Task FinishGeneration(Bitmap resultBitmap, string prompt, Stopwatch totalWatch)
         {
+            LogService.Info("FinishGeneration | start");
             RecordPromptHistory(prompt);
+            LogService.Info("FinishGeneration | 提示词历史已写");
             SetResult(resultBitmap);
+            LogService.Info("FinishGeneration | 结果已绑定到界面");
 
             GenerationProgress = 100;
             GenerationProgressText = $"完成，总耗时 {FormatElapsed(totalWatch.Elapsed)}";
@@ -1319,8 +1326,11 @@ namespace AIRenderer.ViewModels
             if (save)
             {
                 await SaveToHistoryAsync(resultBitmap);
+                LogService.Info("FinishGeneration | 历史已落盘");
                 StatusMessage = $"已生成 {size} · 已保存到历史";
             }
+
+            LogService.Info("FinishGeneration | done");
         }
 
         private void StartGenerationProgress(bool masked)
