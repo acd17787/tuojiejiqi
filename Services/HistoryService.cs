@@ -43,11 +43,9 @@ namespace AIRenderer.Services
                     var items = JsonConvert.DeserializeObject<List<GenerationHistoryItem>>(File.ReadAllText(IndexFile))
                                 ?? new List<GenerationHistoryItem>();
 
-                    // 丢掉文件已被手工删除的条目
-                    var alive = items.Where(i => !string.IsNullOrEmpty(i.FilePath) && File.Exists(i.FilePath)).ToList();
-                    if (alive.Count != items.Count)
-                        WriteIndex(alive);
-                    return alive;
+                    // 只过滤、不写回：File.Exists 在文件被占用/网盘未同步时会误报 false，
+                    // 读路径顺手写回会把条目永久删掉（图片还在，记录没了）。
+                    return items.Where(i => !string.IsNullOrEmpty(i.FilePath) && File.Exists(i.FilePath)).ToList();
                 }
                 catch (Exception ex)
                 {
@@ -73,6 +71,9 @@ namespace AIRenderer.Services
                     bitmap.Save(filePath, ImageFormat.Png);
 
                     var items = LoadGenerationHistoryUnlocked();
+                    if (items == null)
+                        return null;   // 索引读失败：不写回，宁可这次不记
+
                     items.Insert(0, new GenerationHistoryItem
                     {
                         Id = id,
@@ -107,12 +108,18 @@ namespace AIRenderer.Services
             lock (_lock)
             {
                 var items = LoadGenerationHistoryUnlocked();
+                if (items == null)
+                    return;            // 索引读失败：不写回
                 items.RemoveAll(i => i.Id == item.Id);
                 WriteIndex(items);
                 TryDeleteHistoryImage(item.FilePath);
             }
         }
 
+        /// <summary>
+        /// 读索引。**返回 null 表示「读失败」**（文件被占用/内容损坏），与「文件不存在」返回空表区分开：
+        /// 调用方拿到 null 必须中止本次写入，否则会把只剩 1 条的索引覆盖上去，其余记录全部丢失。
+        /// </summary>
         private static List<GenerationHistoryItem> LoadGenerationHistoryUnlocked()
         {
             try
@@ -122,9 +129,10 @@ namespace AIRenderer.Services
                 return JsonConvert.DeserializeObject<List<GenerationHistoryItem>>(File.ReadAllText(IndexFile))
                        ?? new List<GenerationHistoryItem>();
             }
-            catch
+            catch (Exception ex)
             {
-                return new List<GenerationHistoryItem>();
+                LogService.Error("Failed to read history index (本次不写回，避免覆盖)", ex);
+                return null;
             }
         }
 

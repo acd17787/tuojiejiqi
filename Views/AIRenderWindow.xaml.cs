@@ -103,21 +103,6 @@ namespace AIRenderer.Views
             e.Handled = true;
         }
 
-        private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            if (e.ClickCount == 2)
-            {
-                WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
-                return;
-            }
-
-            if (e.LeftButton == MouseButtonState.Pressed)
-            {
-                try { DragMove(); }
-                catch (InvalidOperationException) { /* 非拖动状态下忽略 */ }
-            }
-        }
-
         private void FloatPanel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             // 抽屉 / 弹层内部的点击（含空白与内边距）不冒泡到窗口，否则会被「点空白收起浮层」误关。
@@ -157,7 +142,9 @@ namespace AIRenderer.Views
                 var data = new DataObject();
                 data.SetImage(image);
                 data.SetData(DataFormats.Bitmap, image);
-                Clipboard.SetDataObject(data, true);
+                // 不要 flush（第二个参数 true 会走 OleFlushClipboard）：剪贴板被其他进程占用时
+                // 会在 UI 线程里重试阻塞，而且这是阻塞不是异常，catch 抓不到，表现为「点了复制界面卡死」。
+                Clipboard.SetDataObject(data, false);
                 _viewModel.Toast("图片已复制到剪贴板");
             }
             catch (Exception ex)

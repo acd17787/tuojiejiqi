@@ -1310,7 +1310,7 @@ namespace AIRenderer.ViewModels
             LogService.Info("FinishGeneration | start");
             RecordPromptHistory(prompt);
             LogService.Info("FinishGeneration | 提示词历史已写");
-            SetResult(resultBitmap);
+            ResultImage = await ToBitmapSourceAsync(resultBitmap);
             LogService.Info("FinishGeneration | 结果已绑定到界面");
 
             GenerationProgress = 100;
@@ -1384,8 +1384,12 @@ namespace AIRenderer.ViewModels
             return typical;
         }
 
-        private void SetResult(Bitmap bitmap)
-            => ResultImage = ScreenCapture.BitmapToBitmapSource(bitmap);
+        /// <summary>
+        /// 位图转 BitmapSource 内部是「克隆 + PNG 编码 + 解码」的纯 CPU 活（4K 可到 1~2 秒），
+        /// 放线程池做，避免每次生成完都卡住 UI。返回的 BitmapSource 已 Freeze，可跨线程赋值。
+        /// </summary>
+        private static Task<BitmapSource> ToBitmapSourceAsync(Bitmap bitmap)
+            => Task.Run(() => ScreenCapture.BitmapToBitmapSource(bitmap));
 
         /// <summary>生成中显示的摘要：模式 + 尺寸（不含模型名）</summary>
         private string BuildGenerationDetail()

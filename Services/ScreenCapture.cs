@@ -249,8 +249,15 @@ namespace AIRenderer.Services
                         System.Drawing.Imaging.ImageLockMode.ReadOnly,
                         System.Drawing.Imaging.PixelFormat.Format32bppArgb);
 
-                    System.Runtime.InteropServices.Marshal.Copy(bitmapData.Scan0, pixels, 0, pixels.Length);
-                    bitmap.UnlockBits(bitmapData);
+                    try
+                    {
+                        System.Runtime.InteropServices.Marshal.Copy(bitmapData.Scan0, pixels, 0, pixels.Length);
+                    }
+                    finally
+                    {
+                        // 不放在 finally 里的话，Marshal.Copy 抛异常会让位图一直处于锁定状态
+                        bitmap.UnlockBits(bitmapData);
+                    }
 
                     var bitmapSource = BitmapSource.Create(
                         width, height,

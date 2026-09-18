@@ -13,8 +13,9 @@ namespace AIRenderer.Services
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "AIRenderer", "logs");
 
-        private static readonly string LogFile = Path.Combine(
-            LogFolder, $"tuojie_{DateTime.Now:yyyyMMdd}.log");
+        /// <summary>按当前日期取文件名：静态字段只算一次，Rhino 跨天不重启会一直写进昨天的文件。</summary>
+        private static string CurrentLogFile =>
+            Path.Combine(LogFolder, $"tuojie_{DateTime.Now:yyyyMMdd}.log");
 
         private static readonly object _lock = new object();
 
@@ -33,7 +34,7 @@ namespace AIRenderer.Services
 
                 var line = $"[{DateTime.Now:HH:mm:ss.fff}] [{level}] {message}";
                 lock (_lock)
-                    File.AppendAllText(LogFile, line + Environment.NewLine);
+                    File.AppendAllText(CurrentLogFile, line + Environment.NewLine);
 
                 // 同时输出到 Rhino 命令行（仅 WARN/ERROR）
                 if (level != "INFO")

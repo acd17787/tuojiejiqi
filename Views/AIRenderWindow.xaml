@@ -371,7 +371,7 @@
             <Setter Property="Foreground" Value="#3A4354"/>
             <Setter Property="Background" Value="#FFFFFF"/>
             <Setter Property="BorderBrush" Value="{StaticResource Line2Brush}"/>
-            <Setter Property="IsEnabled" Value="{Binding DataContext.Settings.IsRatioEnabled, RelativeSource={RelativeSource AncestorType=Window}}"/>
+            <!-- 可用性由外层 ItemsControl 统一控制，这里不再重复绑定（两处绑同一来源容易只改一处） -->
             <Style.Triggers>
                 <!-- 快速出图：整组置灰、不高亮任何档位（配色与 SizeChip 的禁用态一致） -->
                 <Trigger Property="IsEnabled" Value="False">

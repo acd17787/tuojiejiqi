@@ -59,6 +59,12 @@ namespace AIRenderer.Services
 
         private static readonly string SettingsFile = Path.Combine(SettingsFolder, "settings.json");
 
+        /// <summary>设置文件的读改写互斥（两个窗口/两个 Rhino 实例都可能同时保存）。</summary>
+        private static readonly object _settingsFileLock = new object();
+
+        /// <summary>本次会话是否发生过「读取/解析失败」。为真时禁止写盘。</summary>
+        private static bool _settingsLoadFailed;
+
         // ── 新版：整份 RenderSettings 读写 ────────────────────────────────
 
         /// <summary>读取设置（首次或旧版本文件都会做一次兼容迁移）</summary>
@@ -110,7 +116,7 @@ namespace AIRenderer.Services
                 settings.AspectRatio = render.SelectedAspectRatio?.Ratio ?? "auto";
                 settings.ImageSize = render.SelectedImageSize ?? "1K";
 
-                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
+                WriteSettingsFile(settings);
             }
             catch (Exception ex)
             {
@@ -185,7 +191,7 @@ namespace AIRenderer.Services
                 if (!Directory.Exists(SettingsFolder)) Directory.CreateDirectory(SettingsFolder);
                 var settings = LoadSettingsInternal();
                 settings.PromptTemplates = templates ?? new List<PromptTemplate>();
-                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
+                WriteSettingsFile(settings);
             }
             catch (Exception ex) { LogService.Error("Error saving prompt templates", ex); }
         }
@@ -224,7 +230,7 @@ namespace AIRenderer.Services
             if (needsSave)
             {
                 settings.ReferenceImages = images;
-                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
+                WriteSettingsFile(settings);
             }
 
             return images;
@@ -237,7 +243,7 @@ namespace AIRenderer.Services
                 if (!Directory.Exists(SettingsFolder)) Directory.CreateDirectory(SettingsFolder);
                 var settings = LoadSettingsInternal();
                 settings.ReferenceImages = images ?? new List<ReferenceImageItem>();
-                File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(settings, Formatting.Indented));
+                WriteSettingsFile(settings);
             }
             catch (Exception ex) { LogService.Error("Error saving reference images", ex); }
         }
@@ -261,7 +267,12 @@ namespace AIRenderer.Services
             }
             catch (Exception ex)
             {
-                LogService.Error("Error loading settings", ex);
+                // 读/解析失败时**不能**静默返回默认值：保存是「读整份→改字段→覆盖整份」，
+                // 一旦用默认值覆盖，API Key、提示词模板、参考图记录会全部丢失。
+                // 这里备份坏文件，并让本次会话拒绝写盘。
+                _settingsLoadFailed = true;
+                LogService.Error("Error loading settings (本次会话将不再写盘，避免用默认值覆盖)", ex);
+                TryBackupCorruptSettings();
             }
 
             return new AppSettings();
@@ -304,6 +315,57 @@ namespace AIRenderer.Services
 
             if (string.IsNullOrWhiteSpace(settings.AspectRatio))
                 settings.AspectRatio = ImageSizeTable.RatioAuto;
+        }
+
+        /// <summary>把损坏的设置文件改名保留，便于人工找回。</summary>
+        private static void TryBackupCorruptSettings()
+        {
+            try
+            {
+                if (!File.Exists(SettingsFile))
+                    return;
+                var bak = SettingsFile + ".corrupt-" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                File.Move(SettingsFile, bak);
+                LogService.Warn($"损坏的设置文件已备份到 {bak}");
+            }
+            catch (Exception ex)
+            {
+                LogService.Warn($"备份损坏设置文件失败：{ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 落盘设置：先写临时文件再替换，避免写一半被杀导致文件截断；
+        /// 读失败过的会话直接跳过写入。
+        /// </summary>
+        private static void WriteSettingsFile(AppSettings settings)
+        {
+            if (settings == null)
+                return;
+
+            if (_settingsLoadFailed)
+            {
+                LogService.Warn("设置文件读取失败过，已跳过本次保存（避免用默认值覆盖原配置）");
+                return;
+            }
+
+            lock (_settingsFileLock)
+            {
+                try
+                {
+                    Directory.CreateDirectory(SettingsFolder);
+                    var tmp = SettingsFile + ".tmp";
+                    File.WriteAllText(tmp, JsonConvert.SerializeObject(settings, Formatting.Indented));
+                    if (File.Exists(SettingsFile))
+                        File.Replace(tmp, SettingsFile, null);
+                    else
+                        File.Move(tmp, SettingsFile);
+                }
+                catch (Exception ex)
+                {
+                    LogService.Error("Error writing settings", ex);
+                }
+            }
         }
 
         /// <summary>已彻底移除的线路留下的旧模型名：只有这些才回落默认值。</summary>
