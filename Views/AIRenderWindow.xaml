@@ -666,7 +666,10 @@
                                     <!-- 蒙版输入层：与 Viewbox 平级、声明在它后面、尺寸等于 Viewbox 实际渲染尺寸。
                                          与显示层彻底解耦，命中测试不依赖任何嵌套顺序；
                                          已显示图片时它是唯一吃掉指针的元素，所以涂抹一定能落下笔画。 -->
+                                    <!-- RequestBringIntoView 同时挂在画布本身：它才是真正拿到焦点、
+                                         触发该事件的那个元素。挂在祖先格上依赖冒泡，两处都挂不依赖。 -->
                                     <InkCanvas x:Name="MaskInkCanvas" Background="Transparent"
+                                               RequestBringIntoView="PreviewCell_RequestBringIntoView"
                                                EditingMode="Ink" Panel.ZIndex="1"
                                                HorizontalAlignment="Left" VerticalAlignment="Top"
                                                Width="{Binding ActualWidth, ElementName=SourceViewbox}"
